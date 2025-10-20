@@ -1,11 +1,14 @@
 {
     "gemini": {
         "model": "gemini-2.5-flash",
-        "api_key": "AIzaSyBOXwfitaKJVX0ov5ojRmEMRq4Pb7uk48U"
+        "api_key_env": "GEMINI_API_KEY",
+        "supports_rag": true
     },
     "llama": {
         "model": "local",
-        "api_link": "http://localhost:8000/generate",
-        "api_key": ""
+        "api_link_env": "http://localhost:8000/generate",
+        "api_key_env": "LLAMA_API_KEY",
+        "supports_rag": true,
+        "context_param": true
     }
 }
