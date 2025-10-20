@@ -1,0 +1,11 @@
+{
+    "gemini": {
+        "model": "gemini-2.5-flash",
+        "api_key": "AIzaSyBOXwfitaKJVX0ov5ojRmEMRq4Pb7uk48U"
+    },
+    "llama": {
+        "model": "local",
+        "api_link": "http://localhost:8000/generate",
+        "api_key": ""
+    }
+}
