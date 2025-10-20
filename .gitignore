@@ -205,3 +205,31 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ===== P003 PROJECT SPECIFIC =====
+# API Keys and Secrets - NEVER COMMIT THESE!
+.env
+.env.*
+*.env
+inference.json
+**/models/inference.json
+
+# API Keys in any format
+*api_key*
+*API_KEY*
+*apikey*
+
+# Local LLM Models (large binary files)
+*.bin
+*.gguf
+*.safetensors
+**/models/*.bin
+**/models/*.gguf
+
+# FAISS Indices (can be regenerated)
+**/chunks_faiss_data/*.bin
+**/chunks_faiss_data/*.index
+
+# Temporary data
+**/temp/
+**/tmp/
