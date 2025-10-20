@@ -9,10 +9,11 @@ def assemble_rag_prompt(
 ) -> str:
     """
     Assembles the final RAG prompt following the Blueprint structure.
+    For local models with chat templates (Zephyr, Llama, etc.)
     
     Args:
         system_file_path: Path to prompts_run.txt containing system instructions
-        factual_data_str: PostgreSQL factual data retrieval results
+        factual_data_str: PostgreSQL factual retrieval results
         filtered_context_str: FAISS code-aware filtered chunks
         user_query_str: User's raw natural language query
     
@@ -52,5 +53,63 @@ def assemble_rag_prompt(
 </s>
 <|assistant|>
 """
+    
+    return final_prompt
+
+
+def assemble_rag_prompt_gemini(
+    system_file_path: str,
+    factual_data_str: str,
+    filtered_context_str: str,
+    user_query_str: str
+) -> str:
+    """
+    Assembles RAG prompt specifically for Gemini (no chat template tags).
+    
+    Args:
+        system_file_path: Path to prompts_run.txt containing system instructions
+        factual_data_str: PostgreSQL factual retrieval results
+        filtered_context_str: FAISS code-aware filtered chunks
+        user_query_str: User's raw natural language query
+    
+    Returns:
+        Formatted prompt string for Gemini
+    """
+    
+    # Load system instructions from file
+    if not os.path.exists(system_file_path):
+        raise FileNotFoundError(f"System instruction file not found: {system_file_path}")
+    
+    with open(system_file_path, 'r', encoding='utf-8') as f:
+        system_instructions = f.read().strip()
+    
+    # Construct contextual knowledge base
+    contextual_knowledge = []
+    
+    if factual_data_str and factual_data_str.strip():
+        contextual_knowledge.append("## PostgreSQL Facts:\n" + factual_data_str.strip())
+    
+    if filtered_context_str and filtered_context_str.strip():
+        contextual_knowledge.append("## FAISS Retrieved Context:\n" + filtered_context_str.strip())
+    
+    # Combine context sections
+    combined_context = "\n\n".join(contextual_knowledge) if contextual_knowledge else "No contextual data available."
+    
+    # Assemble prompt for Gemini (clean format without chat tags)
+    final_prompt = f"""{system_instructions}
+
+---
+
+# CONTEXTUAL KNOWLEDGE BASE:
+{combined_context}
+
+---
+
+# USER COMMAND:
+{user_query_str}
+
+---
+
+Please provide your response below:"""
     
     return final_prompt

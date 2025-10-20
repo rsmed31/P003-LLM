@@ -2,8 +2,13 @@ import google.generativeai as genai
 import os
 import json
 import requests
-from .prompt_builder import assemble_rag_prompt
 from dotenv import load_dotenv
+
+# Handle both relative and absolute imports
+try:
+    from .prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini
+except ImportError:
+    from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini
 
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env')
@@ -21,9 +26,12 @@ def get_config_value(config, key):
         return os.getenv(env_key, config.get(key, ""))
     return config.get(key, "")
 
-def configureGemini(apiKey, model_name):
+def configureGemini(apiKey, model_name, system_instructions=None):
     genai.configure(api_key=apiKey)
-    model = genai.GenerativeModel(model_name=model_name)
+    if system_instructions:
+        model = genai.GenerativeModel(model_name=model_name, system_instruction=system_instructions)
+    else:
+        model = genai.GenerativeModel(model_name=model_name)
     return model
 
 def callGemini(model, prompt):
@@ -79,24 +87,32 @@ def generate(
     
     if model_name == "gemini":
         if use_rag:
-            # For Gemini with RAG, use full assembled prompt
+            # Load system instructions and build a clean prompt (no chat tags)
             system_file = os.path.join(
                 os.path.dirname(__file__),
                 '..',
                 'prompts',
                 'prompts_run.txt'
             )
-            
-            assembled_prompt = assemble_rag_prompt(
-                system_file,
-                factual_data,
-                filtered_context,
-                prompt
-            )
-            model = configureGemini(api_key, config['model'])
-            return callGemini(model, assembled_prompt)
+            with open(system_file, 'r', encoding='utf-8') as f:
+                system_instructions = f.read().strip()
+
+            combined_context = []
+            if factual_data and factual_data.strip():
+                combined_context.append("## PostgreSQL Facts:\n" + factual_data.strip())
+            if filtered_context and filtered_context.strip():
+                combined_context.append("## FAISS Retrieved Context:\n" + filtered_context.strip())
+            context_body = "\n\n".join(combined_context) if combined_context else "No contextual data available."
+
+            user_content = f"""# CONTEXTUAL KNOWLEDGE BASE:
+{context_body}
+
+# USER COMMAND:
+{prompt}
+"""
+            model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
+            return callGemini(model, user_content)
         else:
-            # Regular Gemini call without RAG
             model = configureGemini(api_key, config['model'])
             return callGemini(model, prompt)
     else:
@@ -115,8 +131,8 @@ def generate(
 
 # Example usage
 if __name__ == "__main__":
-    model_name = "gemini"  # Change to "gemini" to use Gemini API
-    
+    model_name = "gemini"  # Change to "llama" to use local API
+
     # Test without RAG
     print("=== Test 1: Simple query without RAG ===")
     try:
@@ -127,15 +143,15 @@ if __name__ == "__main__":
         print(response)
     except Exception as e:
         print(f"Error: {e}")
-    
+
     print("\n=== Test 2: Query with RAG ===")
-    # Test with RAG
+    # Test with RAG (now providing sufficient interface/IP data)
     try:
         response = generate(
             model_name=model_name,
-            prompt="Configure OSPF on R1 with area 0",
-            factual_data="OSPF area 0 is the backbone area",
-            filtered_context="router ospf 1\n network 10.0.0.0 0.0.0.255 area 0"
+            prompt="Generate OSPF configuration for R1, R2, R3 using area 0.\nInterfaces:\nR1: GigabitEthernet0/0 = 10.0.0.1/24\nR2: GigabitEthernet0/1 = 10.0.0.2/24\nR3: GigabitEthernet0/2 = 10.0.0.3/24",
+            factual_data="Router-IDs must be unique per router. Use OSPF process ID 1.",
+            filtered_context="Example:\nrouter ospf 1\n router-id 1.1.1.1\n network 10.0.0.0 0.0.0.255 area 0"
         )
         print(response)
     except Exception as e:
