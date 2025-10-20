@@ -11,9 +11,11 @@ TEMPLATE """
 </s>
 {{- end }}
 <|user|>
+{{- if .Context }}
 # CONTEXTUAL KNOWLEDGE BASE:
 {{ .Context }}
 
+{{- end }}
 # USER COMMAND:
 {{ .Prompt }}
 </s>
