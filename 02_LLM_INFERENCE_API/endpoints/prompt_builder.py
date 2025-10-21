@@ -53,9 +53,10 @@ def build_context_block(
         return None
     else:
         return "## PROCEDURAL CONTEXT (Documentation/Examples):\n" + filtered_context_str.strip()
-    Build the combined context block once using functional/trust labels.
-    Returns a string or None if no context is provided.
-    """
+    # Build the combined context block once using functional/trust labels.
+    # Returns a string or None if no context is provided.
+
+"""
     blocks = []
     if factual_data_str and factual_data_str.strip():
         # This now matches the 'Target Devices and Details' from the RIGID_PROMPT_TEMPLATE
@@ -69,8 +70,10 @@ def build_context_block(
 # --- START OF CUSTOM PROMPT TEMPLATE ---
 # This static text defines the rigid rules and schema, incorporating RAG data dynamically.
 
-RIGID_PROMPT_TEMPLATE = """
-**CRITICAL RULE:** Your entire response MUST be a single, complete JSON array. This array MUST be the ONLY text in your response. Do not include any natural language introduction, explanations, notes, or apologies. Do not include the JSON markdown delimiters (`json ... `).
+RIGID_PROMPT_TEMPLATE = 
+"""
+"""
+# **CRITICAL RULE:** Your entire response MUST be a single, complete JSON array. This array MUST be the ONLY text in your response. Do not include any natural language introduction, explanations, notes, or apologies. Do not include the JSON markdown delimiters (`json ... `).
 
 # TASK: Generate the configuration commands necessary to fulfill the requested Goal for all specified devices.
 
