@@ -4,11 +4,7 @@ import json
 import requests
 from dotenv import load_dotenv
 
-# Handle both relative and absolute imports
-try:
-    from .prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini
-except ImportError:
-    from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini
+from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions, build_context_block
 
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env')
@@ -38,19 +34,15 @@ def callGemini(model, prompt):
     response = model.generate_content(prompt)
     return response.text
 
-def callLlama(api_link, prompt, api_key=None, context=None):
+def callLlama(api_link, prompt, api_key=None, model=None, stream=False):
     headers = {}
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
-    
     payload = {
-        "prompt": prompt
+        "model": model,
+        "prompt": prompt,
+        "stream": stream
     }
-    
-    # Add context if provided (for RAG)
-    if context:
-        payload["context"] = context
-    
     response = requests.post(api_link, json=payload, headers=headers)
     response.raise_for_status()
     return response.json().get('text', response.text)
@@ -86,52 +78,48 @@ def generate(
     use_rag = config.get('supports_rag', False) and (factual_data or filtered_context)
     
     if model_name == "gemini":
+        # Load system instructions from JSON
+        system_source = os.path.join(
+            os.path.dirname(__file__),
+            '..',
+            'prompts',
+            'prompts.json'
+        )
+        system_instructions = load_system_instructions(system_source)
+
         if use_rag:
-            # Load system instructions and build a clean prompt (no chat tags)
-            system_file = os.path.join(
+            # Use prompt_builder to assemble the RAG prompt for Gemini
+            assembled_prompt = assemble_rag_prompt_gemini(
+                system_source,
+                factual_data,
+                filtered_context,
+                prompt
+            )
+            model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
+            return callGemini(model, assembled_prompt)
+        else:
+            # Non-RAG Gemini still benefits from system prompt
+            model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
+            return callGemini(model, prompt)
+    else:
+        # Local model (Ollama)
+        stream_flag = config.get('stream', False)
+        if use_rag:
+            # Assemble the full RAG prompt with chat tags for local template
+            system_source = os.path.join(
                 os.path.dirname(__file__),
                 '..',
                 'prompts',
-                'prompts_run.txt'
+                'prompts.json'
             )
-            with open(system_file, 'r', encoding='utf-8') as f:
-                system_instructions = f.read().strip()
-
-            combined_context = []
-            if factual_data and factual_data.strip():
-                combined_context.append("## PostgreSQL Facts:\n" + factual_data.strip())
-            if filtered_context and filtered_context.strip():
-                combined_context.append("## FAISS Retrieved Context:\n" + filtered_context.strip())
-            context_body = "\n\n".join(combined_context) if combined_context else "No contextual data available."
-
-            user_content = f"""# CONTEXTUAL KNOWLEDGE BASE:
-{context_body}
-
-# USER COMMAND:
-{prompt}
-"""
-            model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
-            return callGemini(model, user_content)
+            prompt_to_send = assemble_rag_prompt(system_source, factual_data, filtered_context, prompt)
         else:
-            model = configureGemini(api_key, config['model'])
-            return callGemini(model, prompt)
-    else:
-        # Local model
-        if use_rag:
-            # Combine context for local models
-            combined_context = []
-            if factual_data and factual_data.strip():
-                combined_context.append("## PostgreSQL Facts:\n" + factual_data.strip())
-            if filtered_context and filtered_context.strip():
-                combined_context.append("## FAISS Retrieved Context:\n" + filtered_context.strip())
-            
-            context = "\n\n".join(combined_context) if combined_context else None
-        
-        return callLlama(api_link, prompt, api_key, context)
+            prompt_to_send = prompt
+        return callLlama(api_link, prompt_to_send, api_key, model=config.get('model'), stream=stream_flag)
 
 # Example usage
 if __name__ == "__main__":
-    model_name = "gemini"  # Change to "llama" to use local API
+    model_name = "llama"  # Change to "llama" to use local API
 
     # Test without RAG
     print("=== Test 1: Simple query without RAG ===")

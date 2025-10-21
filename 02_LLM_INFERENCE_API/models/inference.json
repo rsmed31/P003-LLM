@@ -5,10 +5,11 @@
         "supports_rag": true
     },
     "llama": {
-        "model": "local",
-        "api_link_env": "http://localhost:8000/generate",
+        "model": "zephyr_configurator",
+        "api_link_env": "LLAMA_API_LINK",
         "api_key_env": "LLAMA_API_KEY",
         "supports_rag": true,
-        "context_param": true
+        "context_param": true,
+        "stream": false
     }
 }
