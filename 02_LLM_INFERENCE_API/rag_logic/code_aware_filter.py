@@ -135,4 +135,7 @@ router ospf 1
     
     print("\n\n=== STATISTICS ===")
     print(f"Original chunks: {len(test_chunks)}")
-    print(f"Filtered chunks: {len([c for c in filtered.split('\\n---\\n') if c.strip()])}")
+    # Fix f-string backslash issue
+    separator = '\n---\n'
+    filtered_chunk_list = [c for c in filtered.split(separator) if c.strip()]
+    print(f"Filtered chunks: {len(filtered_chunk_list)}")

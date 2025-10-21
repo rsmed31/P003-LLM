@@ -1,6 +1,6 @@
 import os
 import json
-from code_aware_filter import filter_and_refine_context
+from rag_logic.code_aware_filter import filter_and_refine_context
 
 
 def load_system_instructions(system_source_path: str) -> str:

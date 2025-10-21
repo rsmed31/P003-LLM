@@ -6,8 +6,10 @@ This module implements the retrieval triage logic that decides whether to:
 2. Proceed to full RAG with FAISS procedural context (lower confidence)
 """
 
-from typing import Dict, Optional, Tuple
-import numpy as np
+from typing import Dict, Optional
+from .postgres_client import PostgresClient
+from .faiss_client import FAISSClient
+from .embedding_service import EmbeddingService
 
 
 class RetrievalOrchestrator:
@@ -17,16 +19,23 @@ class RetrievalOrchestrator:
     
     DEFINITIVE_THRESHOLD = 0.98  # High confidence threshold for definitive answers
     
-    def __init__(self, postgres_client=None, faiss_client=None):
+    def __init__(
+        self,
+        postgres_client: PostgresClient = None,
+        faiss_client: FAISSClient = None,
+        embedding_service: EmbeddingService = None
+    ):
         """
         Initialize orchestrator with retrieval clients.
         
         Args:
             postgres_client: Client for PostgreSQL verified facts retrieval
             faiss_client: Client for FAISS procedural context retrieval
+            embedding_service: Service for generating query embeddings
         """
-        self.postgres_client = postgres_client
-        self.faiss_client = faiss_client
+        self.postgres_client = postgres_client or PostgresClient()
+        self.faiss_client = faiss_client or FAISSClient()
+        self.embedding_service = embedding_service or EmbeddingService()
     
     def retrieve_with_triage(
         self,
@@ -55,12 +64,15 @@ class RetrievalOrchestrator:
                 - confidence: float (similarity score from postgres)
         """
         
+        # Generate query embedding
+        query_embedding = self.embedding_service.encode(user_query)
+        
         # Check 1: Query PostgreSQL for verified facts
-        postgres_result = self._query_postgres_facts(user_query)
+        postgres_result = self._query_postgres_facts(user_query, query_embedding)
         
         if postgres_result is None:
             # No postgres connection or no results
-            return self._fallback_to_faiss(user_query, enable_faiss)
+            return self._fallback_to_faiss(user_query, query_embedding, enable_faiss)
         
         confidence = postgres_result.get("confidence", 0.0)
         factual_data = postgres_result.get("content", "")
@@ -76,9 +88,9 @@ class RetrievalOrchestrator:
                 "message": "Definitive match found. Returning verified configuration."
             }
         
-        # LOW CONFIDENCE: Proceed to full RAG with FAISS
+        # LOW CONFIDENCE: Proceed to full RAG
         if enable_faiss:
-            faiss_result = self._query_faiss_context(user_query)
+            faiss_result = self._query_faiss_context(user_query, query_embedding)
             filtered_context = faiss_result.get("content", "")
         else:
             filtered_context = ""
@@ -91,20 +103,18 @@ class RetrievalOrchestrator:
             "message": "Proceeding to full RAG with LLM generation."
         }
     
-    def _query_postgres_facts(self, query: str) -> Optional[Dict]:
+    def _query_postgres_facts(self, query: str, query_embedding) -> Optional[Dict]:
         """
         Query PostgreSQL for verified facts with semantic similarity.
         
         Returns:
             Dict with 'content' and 'confidence' or None if unavailable
         """
-        if self.postgres_client is None:
-            return None
-        
         try:
             # Execute semantic search against verified facts
             results = self.postgres_client.semantic_search(
                 query=query,
+                query_embedding=query_embedding,
                 top_k=1,
                 table="verified_facts"
             )
@@ -122,18 +132,15 @@ class RetrievalOrchestrator:
             print(f"Warning: PostgreSQL query failed: {e}")
             return None
     
-    def _query_faiss_context(self, query: str) -> Dict:
+    def _query_faiss_context(self, query: str, query_embedding) -> Dict:
         """
         Query FAISS for procedural documentation context.
         
         Returns:
             Dict with 'content' key containing concatenated chunks
         """
-        if self.faiss_client is None:
-            return {"content": ""}
-        
         try:
-            results = self.faiss_client.search(query=query, top_k=5)
+            results = self.faiss_client.search(query_embedding=query_embedding, top_k=5)
             
             # Concatenate chunks with separator
             chunks = [r.get("text", "") for r in results if r.get("text")]
@@ -143,12 +150,12 @@ class RetrievalOrchestrator:
             print(f"Warning: FAISS query failed: {e}")
             return {"content": ""}
     
-    def _fallback_to_faiss(self, query: str, enable_faiss: bool) -> Dict:
+    def _fallback_to_faiss(self, query: str, query_embedding, enable_faiss: bool) -> Dict:
         """
         Fallback when PostgreSQL is unavailable.
         """
         if enable_faiss:
-            faiss_result = self._query_faiss_context(query)
+            faiss_result = self._query_faiss_context(query, query_embedding)
             return {
                 "route": "full_rag",
                 "factual_data": "",
@@ -164,57 +171,3 @@ class RetrievalOrchestrator:
             "confidence": 0.0,
             "message": "No retrieval sources available."
         }
-
-
-# Mock clients for testing
-class MockPostgresClient:
-    """Mock PostgreSQL client for testing."""
-    
-    def semantic_search(self, query: str, top_k: int = 1, table: str = "verified_facts"):
-        # Simulate definitive match for specific queries
-        if "router-id" in query.lower() and "unique" in query.lower():
-            return [{
-                "text": "Router-IDs must be unique per router in OSPF domain. Use format: router-id <IP>",
-                "similarity": 0.99
-            }]
-        
-        # Simulate moderate match
-        if "ospf" in query.lower():
-            return [{
-                "text": "OSPF uses areas for hierarchical routing. Area 0 is the backbone.",
-                "similarity": 0.85
-            }]
-        
-        return []
-
-
-class MockFAISSClient:
-    """Mock FAISS client for testing."""
-    
-    def search(self, query: str, top_k: int = 5):
-        return [{
-            "text": "router ospf 1\n router-id 1.1.1.1\n network 10.0.0.0 0.0.0.255 area 0"
-        }]
-
-
-# Example usage
-if __name__ == "__main__":
-    # Initialize orchestrator with mock clients
-    orchestrator = RetrievalOrchestrator(
-        postgres_client=MockPostgresClient(),
-        faiss_client=MockFAISSClient()
-    )
-    
-    print("=== Test 1: Definitive Match (High Confidence) ===")
-    result1 = orchestrator.retrieve_with_triage("Why must router-id be unique?")
-    print(f"Route: {result1['route']}")
-    print(f"Confidence: {result1['confidence']}")
-    print(f"Message: {result1['message']}")
-    print(f"Factual Data: {result1['factual_data'][:100]}...")
-    
-    print("\n=== Test 2: Full RAG (Lower Confidence) ===")
-    result2 = orchestrator.retrieve_with_triage("Configure OSPF on R1 with area 0")
-    print(f"Route: {result2['route']}")
-    print(f"Confidence: {result2['confidence']}")
-    print(f"Message: {result2['message']}")
-    print(f"Has Context: {len(result2['filtered_context']) > 0}")

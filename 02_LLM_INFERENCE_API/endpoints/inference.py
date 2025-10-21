@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from retrieval.retrieval_orchestrator import RetrievalOrchestrator, MockPostgresClient, MockFAISSClient
 from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
 
 # Load environment variables
@@ -17,12 +16,6 @@ load_dotenv(env_path)
 config_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'inference.json')
 with open(config_path, 'r') as f:
     CONFIG = json.load(f)
-
-# Initialize retrieval orchestrator (use mock clients for now)
-RETRIEVAL_ORCHESTRATOR = RetrievalOrchestrator(
-    postgres_client=MockPostgresClient(),
-    faiss_client=MockFAISSClient()
-)
 
 
 def get_config_value(config, key):
@@ -86,7 +79,8 @@ def generate(
     factual_data: str = "",
     filtered_context: str = "",
     use_code_filter: bool = True,
-    use_triage: bool = True
+    use_triage: bool = True,
+    orchestrator = None  # Injected from app.py
 ) -> str:
     """
     Main inference function with integrated retrieval triage.
@@ -94,28 +88,28 @@ def generate(
     Args:
         model_name: "gemini" or local model name
         prompt: User's query
-        context: Deprecated (use triage instead)
-        factual_data: Deprecated (use triage instead)
-        filtered_context: Deprecated (use triage instead)
         use_code_filter: Apply code-aware filtering
         use_triage: Use retrieval orchestrator triage logic
+        orchestrator: RetrievalOrchestrator instance (injected)
     
     Returns:
         JSON string with {model, response} or direct definitive answer
     """
+    # Import here to avoid circular dependency
+    if orchestrator is None:
+        from app import RETRIEVAL_ORCHESTRATOR
+        orchestrator = RETRIEVAL_ORCHESTRATOR
+    
     config = CONFIG.get(model_name, CONFIG["llama"]) if model_name != "gemini" else CONFIG["gemini"]
     
-    # Get API credentials
     api_key = get_config_value(config, "api_key")
     api_link = get_config_value(config, "api_link")
     
     # Execute retrieval triage if enabled
     if use_triage and config.get("supports_rag", False):
-        triage_result = RETRIEVAL_ORCHESTRATOR.retrieve_with_triage(prompt)
+        triage_result = orchestrator.retrieve_with_triage(prompt)
         
-        # Check triage decision
         if triage_result["route"] == "definitive":
-            # HIGH CONFIDENCE: Return definitive answer directly (skip LLM)
             return json.dumps({
                 "model": "retrieval_triage",
                 "response": triage_result["factual_data"],
@@ -123,12 +117,10 @@ def generate(
                 "route": "definitive"
             }, indent=2)
         
-        # FULL RAG PATH: Use procedural context
         filtered_context = triage_result["filtered_context"]
-        factual_data = triage_result["factual_data"]  # May be empty or supporting facts
+        factual_data = triage_result["factual_data"]
         use_rag = True
     else:
-        # Legacy path: manual context provision
         use_rag = config.get("supports_rag", False) and (factual_data or filtered_context)
     
     # Generate response via LLM
@@ -154,22 +146,3 @@ def generate(
             else prompt
         )
         return callLlama(api_link, prompt_to_send, api_key, model=config.get("model"), stream=stream_flag)
-
-
-# Example
-if __name__ == "__main__":
-    model_name = "llama"
-    
-    print("=== Test 1: Definitive Route (Should skip LLM) ===")
-    print(generate(
-        model_name=model_name,
-        prompt="Why must router-id be unique?",
-        use_triage=True
-    ))
-    
-    print("\n=== Test 2: Full RAG Route ===")
-    print(generate(
-        model_name=model_name,
-        prompt="Configure OSPF on R1 with area 0",
-        use_triage=True
-    ))
