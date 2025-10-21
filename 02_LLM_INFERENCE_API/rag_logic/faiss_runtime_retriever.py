@@ -15,7 +15,7 @@ from sentence_transformers import SentenceTransformer
 
 
 # Constants for asset paths (Team 1 deliverables)
-INDEX_PATH = os.path.join(
+INDEX_PATH = os.path.join( 
     os.path.dirname(__file__),
     "../../01_DATA_ASSETS/chunks_faiss_data/faiss_index.bin"
 )

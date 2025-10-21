@@ -1,5 +1,6 @@
 import os
 import json
+from rag_logic.code_aware_filter import filter_and_refine_context
 
 
 def load_system_instructions(system_source_path: str) -> str:
@@ -20,8 +21,38 @@ def load_system_instructions(system_source_path: str) -> str:
         return f.read().strip()
 
 
-def build_context_block(factual_data_str: str, filtered_context_str: str) -> str | None:
+def build_context_block(
+    filtered_context_str: str,
+    use_code_filter: bool = True
+) -> str | None:
     """
+    Build the procedural context block using code-aware filtering.
+    
+    NOTE: Definitive knowledge is no longer handled here.
+    The retrieval orchestrator (LLM-007) decides whether to use definitive facts
+    or proceed to full RAG BEFORE this function is called.
+    
+    Args:
+        filtered_context_str: FAISS procedural chunks (to be code-filtered)
+        use_code_filter: Apply code-aware filtering to procedural context
+    
+    Returns:
+        Formatted procedural context string or None if no context provided
+    """
+    
+    if not filtered_context_str or not filtered_context_str.strip():
+        return None
+    
+    # Apply code-aware filtering if enabled
+    if use_code_filter:
+        # Split by chunks if multiple are concatenated
+        raw_chunks = filtered_context_str.split('\n---\n')
+        refined = filter_and_refine_context(raw_chunks)
+        if refined:
+            return "## PROCEDURAL CONTEXT (Documentation/Examples):\n" + refined
+        return None
+    else:
+        return "## PROCEDURAL CONTEXT (Documentation/Examples):\n" + filtered_context_str.strip()
     Build the combined context block once using functional/trust labels.
     Returns a string or None if no context is provided.
     """
@@ -73,20 +104,33 @@ The response MUST be a JSON array containing an object for EACH device that requ
 
 def assemble_rag_prompt(
     system_file_path: str,
-    factual_data_str: str,
     filtered_context_str: str,
-    user_query_str: str
+    user_query_str: str,
+    use_code_filter: bool = True
 ) -> str:
     """
     Assembles the final RAG prompt following the Blueprint structure.
     For local models with chat templates (Zephyr, Llama, etc.)
+    Assembles the final RAG prompt for full RAG path.
+    
+    NOTE: Only called when retrieval orchestrator routes to "full_rag".
+    Definitive answers bypass this function entirely.
+    
+    Args:
+        system_file_path: Path to system instructions
+        filtered_context_str: FAISS procedural chunks
+        user_query_str: User's query
+        use_code_filter: Apply code-aware filtering
+    
+    Returns:
+        Formatted prompt for local models with chat templates
     """
     
-    # Load system instructions (JSON or text)
+    # Load system instructions
     system_instructions = load_system_instructions(system_file_path)
     
-    # Build contextual knowledge base once
-    combined_context = build_context_block(factual_data_str, filtered_context_str) or "No contextual data available."
+    # Build procedural context only
+    combined_context = build_context_block(filtered_context_str, use_code_filter) or "No contextual data available."
     
     # Fill the static template with dynamic data
     filled_template = RIGID_PROMPT_TEMPLATE.format(
@@ -96,6 +140,7 @@ def assemble_rag_prompt(
 
     # Assemble final prompt following chat template structure (e.g., Llama/Zephyr)
     # The system instructions are placed inside the <|system|> tag.
+    # Assemble final prompt
     final_prompt = f"""<|system|>
 {system_instructions}
 </s>
@@ -110,19 +155,31 @@ def assemble_rag_prompt(
 
 def assemble_rag_prompt_gemini(
     system_file_path: str,
-    factual_data_str: str,
     filtered_context_str: str,
-    user_query_str: str
+    user_query_str: str,
+    use_code_filter: bool = True
 ) -> str:
     """
     Assembles RAG prompt specifically for Gemini (no chat template tags).
+    Assembles RAG prompt for Gemini (full RAG path only).
+    
+    NOTE: Only called when retrieval orchestrator routes to "full_rag".
+    
+    Args:
+        system_file_path: Path to system instructions
+        filtered_context_str: FAISS procedural chunks
+        user_query_str: User's query
+        use_code_filter: Apply code-aware filtering
+    
+    Returns:
+        Formatted prompt for Gemini without chat template tags
     """
     
-    # Load system instructions (JSON or text)
+    # Load system instructions
     system_instructions = load_system_instructions(system_file_path)
     
-    # Build contextual knowledge base once
-    combined_context = build_context_block(factual_data_str, filtered_context_str) or "No contextual data available."
+    # Build procedural context only
+    combined_context = build_context_block(filtered_context_str, use_code_filter) or "No contextual data available."
     
     # Fill the static template with dynamic data
     filled_template = RIGID_PROMPT_TEMPLATE.format(
@@ -131,6 +188,7 @@ def assemble_rag_prompt_gemini(
     )
 
     # Assemble prompt for Gemini (clean format, using the system instruction loaded from file)
+    # Assemble prompt for Gemini
     final_prompt = f"""{system_instructions}
 
 ---
