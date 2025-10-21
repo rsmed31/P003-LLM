@@ -3,8 +3,11 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions, build_context_block
+from retrieval.retrieval_orchestrator import RetrievalOrchestrator, MockPostgresClient, MockFAISSClient
+from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
 
 # Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env')
@@ -14,6 +17,12 @@ load_dotenv(env_path)
 config_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'inference.json')
 with open(config_path, 'r') as f:
     CONFIG = json.load(f)
+
+# Initialize retrieval orchestrator (use mock clients for now)
+RETRIEVAL_ORCHESTRATOR = RetrievalOrchestrator(
+    postgres_client=MockPostgresClient(),
+    faiss_client=MockFAISSClient()
+)
 
 
 def get_config_value(config, key):
@@ -75,40 +84,72 @@ def generate(
     prompt: str,
     context: str = None,
     factual_data: str = "",
-    filtered_context: str = ""
+    filtered_context: str = "",
+    use_code_filter: bool = True,
+    use_triage: bool = True
 ) -> str:
     """
-    Main inference function that routes to appropriate API based on model.
-    Returns only {model, response} as JSON.
+    Main inference function with integrated retrieval triage.
+    
+    Args:
+        model_name: "gemini" or local model name
+        prompt: User's query
+        context: Deprecated (use triage instead)
+        factual_data: Deprecated (use triage instead)
+        filtered_context: Deprecated (use triage instead)
+        use_code_filter: Apply code-aware filtering
+        use_triage: Use retrieval orchestrator triage logic
+    
+    Returns:
+        JSON string with {model, response} or direct definitive answer
     """
     config = CONFIG.get(model_name, CONFIG["llama"]) if model_name != "gemini" else CONFIG["gemini"]
-
-    # Get actual values from environment
+    
+    # Get API credentials
     api_key = get_config_value(config, "api_key")
     api_link = get_config_value(config, "api_link")
-
-    # Check if RAG should be applied
-    use_rag = config.get("supports_rag", False) and (factual_data or filtered_context)
-
+    
+    # Execute retrieval triage if enabled
+    if use_triage and config.get("supports_rag", False):
+        triage_result = RETRIEVAL_ORCHESTRATOR.retrieve_with_triage(prompt)
+        
+        # Check triage decision
+        if triage_result["route"] == "definitive":
+            # HIGH CONFIDENCE: Return definitive answer directly (skip LLM)
+            return json.dumps({
+                "model": "retrieval_triage",
+                "response": triage_result["factual_data"],
+                "confidence": triage_result["confidence"],
+                "route": "definitive"
+            }, indent=2)
+        
+        # FULL RAG PATH: Use procedural context
+        filtered_context = triage_result["filtered_context"]
+        factual_data = triage_result["factual_data"]  # May be empty or supporting facts
+        use_rag = True
+    else:
+        # Legacy path: manual context provision
+        use_rag = config.get("supports_rag", False) and (factual_data or filtered_context)
+    
+    # Generate response via LLM
     if model_name == "gemini":
-        # Load system instructions
         system_source = os.path.join(os.path.dirname(__file__), "..", "prompts", "prompts.json")
         system_instructions = load_system_instructions(system_source)
-
         model = configureGemini(api_key, config["model"], system_instructions=system_instructions)
+        
         assembled_prompt = (
-            assemble_rag_prompt_gemini(system_source, factual_data, filtered_context, prompt)
+            assemble_rag_prompt_gemini(system_source, filtered_context, prompt, use_code_filter)
             if use_rag
             else prompt
         )
         return callGemini(model, assembled_prompt)
     else:
-        # Local model (e.g., LLaMA / Zephyr)
+        # Local model
         stream_flag = config.get("stream", False)
         system_source = os.path.join(os.path.dirname(__file__), "..", "prompts", "prompts.json")
-
+        
         prompt_to_send = (
-            assemble_rag_prompt(system_source, factual_data, filtered_context, prompt)
+            assemble_rag_prompt(system_source, filtered_context, prompt, use_code_filter)
             if use_rag
             else prompt
         )
@@ -117,22 +158,18 @@ def generate(
 
 # Example
 if __name__ == "__main__":
-    model_name = "llama"  # or "gemini"
-
-    print("=== Test 1: Simple query ===")
-    print(
-        generate(
-            model_name=model_name,
-            prompt="List the steps to configure routing between two networks."
-        )
-    )
-
-    print("\n=== Test 2: Query with RAG ===")
-    print(
-        generate(
-            model_name=model_name,
-            prompt="Generate configuration commands for secure routing between two devices.",
-            factual_data="All devices must authenticate routes using key-chain 'SECURE_AUTH'.",
-            filtered_context="Example: router config template for route authentication."
-        )
-    )
+    model_name = "llama"
+    
+    print("=== Test 1: Definitive Route (Should skip LLM) ===")
+    print(generate(
+        model_name=model_name,
+        prompt="Why must router-id be unique?",
+        use_triage=True
+    ))
+    
+    print("\n=== Test 2: Full RAG Route ===")
+    print(generate(
+        model_name=model_name,
+        prompt="Configure OSPF on R1 with area 0",
+        use_triage=True
+    ))
