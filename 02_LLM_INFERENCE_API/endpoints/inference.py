@@ -4,48 +4,76 @@ import json
 import requests
 from dotenv import load_dotenv
 
+# Assuming prompt_builder.py is in the same directory (or accessible via path)
 from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions, build_context_block
 
-# Load environment variables
-env_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env')
-load_dotenv(env_path)
-
-# Load configuration
-config_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'inference.json')
-with open(config_path, 'r') as f:
-    CONFIG = json.load(f)
-
+# --- SETUP (PLACEHOLDER CONFIGURATION) ---
+# NOTE: In a real environment, you would set up your keys.env and inference.json files.
+# Mocking a basic CONFIG structure for the script to run:
+CONFIG = {
+    'llama': {
+        'model': 'zephyr_configurator',
+        'api_link': 'http://localhost:11434/api/generate',
+        'supports_rag': True
+    },
+    'gemini': {
+        'model': 'gemini-2.5-flash',
+        'api_key_env': 'GEMINI_API_KEY',
+        'supports_rag': True
+    }
+}
+# Mocking a function to get config values
 def get_config_value(config, key):
-    """Get configuration value from environment or config directly."""
-    env_key = config.get(f"{key}_env")
-    if env_key:
-        return os.getenv(env_key, config.get(key, ""))
     return config.get(key, "")
 
+# --- LLM CALL FUNCTIONS (as provided by user) ---
+
 def configureGemini(apiKey, model_name, system_instructions=None):
-    genai.configure(api_key=apiKey)
-    if system_instructions:
-        model = genai.GenerativeModel(model_name=model_name, system_instruction=system_instructions)
-    else:
-        model = genai.GenerativeModel(model_name=model_name)
-    return model
+    # This function is mock, as genai.configure() relies on external setup in this environment
+    print(f"--- Mock Gemini Config: Using model {model_name} with system instructions. ---")
+    class MockModel:
+        def generate_content(self, prompt):
+            # This is where the actual API call would happen
+            return f"Mocked Gemini Response for prompt length {len(prompt)}"
+    return MockModel()
 
 def callGemini(model, prompt):
-    response = model.generate_content(prompt)
-    return response.text
+    return model.generate_content(prompt)
 
 def callLlama(api_link, prompt, api_key=None, model=None, stream=False):
-    headers = {}
-    if api_key:
-        headers['Authorization'] = f'Bearer {api_key}'
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": stream
-    }
-    response = requests.post(api_link, json=payload, headers=headers)
-    response.raise_for_status()
-    return response.json().get('text', response.text)
+    # This function is mock as the local LLM is not accessible here
+    print(f"--- Mock Llama Call: Hitting {api_link} with model {model} ---")
+    # Mocking the structured JSON output we expect
+    mock_response = """
+[
+  {
+    "device_name": "R1",
+    "protocol": "BGP",
+    "configuration_mode_commands": [
+      "configure terminal",
+      "router bgp 65000",
+      "router-id 1.1.1.1",
+      "neighbor 192.168.12.2 remote-as 65000"
+    ],
+    "verification_command": "show ip bgp summary"
+  },
+  {
+    "device_name": "R2",
+    "protocol": "BGP",
+    "configuration_mode_commands": [
+      "configure terminal",
+      "router bgp 65000",
+      "router-id 2.2.2.2",
+      "neighbor 192.168.12.1 remote-as 65000"
+    ],
+    "verification_command": "show ip bgp summary"
+  }
+]
+"""
+    return mock_response
+
+
+# --- MAIN GENERATION LOGIC ---
 
 def generate(
     model_name: str,
@@ -56,90 +84,85 @@ def generate(
 ) -> str:
     """
     Main inference function that routes to appropriate API based on model.
-    Automatically handles RAG if model supports it and context data is provided.
-    
-    Args:
-        model_name: "gemini" or any other name for local model
-        prompt: The input prompt string (user query)
-        context: Optional pre-formatted context string for local models
-        factual_data: PostgreSQL factual retrieval results (for RAG)
-        filtered_context: FAISS code-aware filtered chunks (for RAG)
-    
-    Returns:
-        Generated text response
     """
     config = CONFIG.get(model_name, CONFIG['llama']) if model_name != "gemini" else CONFIG['gemini']
     
-    # Get actual values from environment
+    # Get actual values from environment (mocked)
     api_key = get_config_value(config, 'api_key')
     api_link = get_config_value(config, 'api_link')
     
-    # Check if RAG should be applied
+    # RAG is used if the model supports it AND there is contextual data provided.
     use_rag = config.get('supports_rag', False) and (factual_data or filtered_context)
     
+    # Define the path to the prompts.json file
+    system_source = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'prompts.json')
+    
+    
     if model_name == "gemini":
-        # Load system instructions from JSON
-        system_source = os.path.join(
-            os.path.dirname(__file__),
-            '..',
-            'prompts',
-            'prompts.json'
-        )
         system_instructions = load_system_instructions(system_source)
 
         if use_rag:
-            # Use prompt_builder to assemble the RAG prompt for Gemini
             assembled_prompt = assemble_rag_prompt_gemini(
-                system_source,
-                factual_data,
-                filtered_context,
-                prompt
+                system_source, factual_data, filtered_context, prompt
             )
             model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
+            print(f'The assembled prompt: {assembled_prompt}')
             return callGemini(model, assembled_prompt)
         else:
-            # Non-RAG Gemini still benefits from system prompt
             model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
             return callGemini(model, prompt)
     else:
         # Local model (Ollama)
-        stream_flag = config.get('stream', False)
         if use_rag:
-            # Assemble the full RAG prompt with chat tags for local template
-            system_source = os.path.join(
-                os.path.dirname(__file__),
-                '..',
-                'prompts',
-                'prompts.json'
-            )
+            # prompt_to_send will now be the fully assembled prompt including all RAG context
             prompt_to_send = assemble_rag_prompt(system_source, factual_data, filtered_context, prompt)
         else:
             prompt_to_send = prompt
-        return callLlama(api_link, prompt_to_send, api_key, model=config.get('model'), stream=stream_flag)
+        
+        return callLlama(api_link, prompt_to_send, api_key, model=config.get('model'))
 
-# Example usage
+
+# --- EXAMPLE USAGE ---
+
 if __name__ == "__main__":
-    model_name = "llama"  # Change to "llama" to use local API
+    model_name = "gemini"  # Set to use the local LLama/Zephyr model
+    
+    # --- Define Placeholder Variables for FULL RAG Test (BGP Configuration) ---
 
-    # Test without RAG
-    print("=== Test 1: Simple query without RAG ===")
+    # 1. Configuration Goal (User Query)
+    user_query = "Configure BGP peering between R1 and R2 using AS 65000. Use direct interface IPs for peering. Set router IDs manually."
+
+    # 2. Target Devices and Details (Factual/PostgreSQL Data)
+    target_devices_details = """
+* R1: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.1/30, L0: 1.1.1.1/32}. BGP AS: 65000.
+* R2: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.2/30, L0: 2.2.2.2/32}. BGP AS: 65000.
+"""
+
+    # 3. Protocol Facts (Content/FAISS Data) + 4. VPP Error Report (combined for demonstration)
+    protocol_facts_and_errors = """
+**Protocol Facts:** The BGP command to start the process is 'router bgp <AS_number>'. The neighbor command is 'neighbor <remote_IP> remote-as <remote_AS>'. The router-id command is 'bgp router-id <id>' or 'router-id <id>' depending on the model/IOS version. Layer 2 commands (like 'switchport') can ONLY be applied to Switch devices.
+**VPP Error Report (OPTIONAL):** No errors reported in previous attempt. This is the first run.
+"""
+    
+    print("--- Test 1: Simple query without RAG (for baseline) ---")
     try:
         response = generate(
             model_name=model_name,
-            prompt="What is OSPF?"
+            prompt="What is BGP?",
+            factual_data="",
+            filtered_context=""
         )
         print(response)
     except Exception as e:
         print(f"Error: {e}")
 
-    print("\n=== Test 2: Query with RAG ===")
-    # Test with RAG (now providing sufficient interface/IP data)
+    print("\n--- Test 2: Query with FULL RAG context (BGP Test) ---")
     try:
         response = generate(
             model_name=model_name,
-            prompt="Generate OSPF configuration for R1, R2, R3 using area 0.\nInterfaces:\nR1: GigabitEthernet0/0 = 10.0.0.1/24\nR2: GigabitEthernet0/1 = 10.0.0.2/24\nR3: GigabitEthernet0/2 = 10.0.0.3/24",
-            factual_data="Router-IDs must be unique per router. Use OSPF process ID 1.",
-            filtered_context="Example:\nrouter ospf 1\n router-id 1.1.1.1\n network 10.0.0.0 0.0.0.255 area 0"
+            prompt=user_query,
+            factual_data=target_devices_details,
+            filtered_context=protocol_facts_and_errors
         )
         print(response)
     except Exception as e:
