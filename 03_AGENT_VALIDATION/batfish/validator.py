@@ -1,268 +1,243 @@
 from flask import Flask, request, jsonify
 from pybatfish.client.session import Session
-
+from pybatfish.question import bfq
 from pybatfish.datamodel.flow import PathConstraints
 import os
-import time
-import logging
+import shutil
+import uuid
+from typing import Dict, List, Optional
 
-app = Flask(__name__)
+# -------------------------
+# Server & Batfish session
+# -------------------------
+app = Flask(_name_)
+bf = Session(host=os.environ.get("BATFISH_HOST", "localhost"))  # e.g., "batfish" in docker-compose
 
-# configure basic logging
-logging.basicConfig(level=logging.INFO)
+# -------------------------
+# Configurable constants
+# -------------------------
+NETWORK_NAME = os.environ.get("BF_NETWORK_NAME", "network-test")
+# This is your pristine/base snapshot folder (must exist and be Batfish-compatible on disk)
+SNAPSHOT_BASE = os.environ.get("BF_SNAPSHOT_BASE", "./snapshot")
+# Default host intent for reachability if none provided in the request
+DEFAULT_SRC_HOST = os.environ.get("REACH_SRC", "host1")
+DEFAULT_DST_HOST = os.environ.get("REACH_DST", "host2")
 
-# Define Batfish session globals (initialized via helper below)
-bf = None
-bfq = None
+# -------------------------
+# Helpers
+# -------------------------
+def _ensure_network():
+    bf.set_network(NETWORK_NAME)
 
+def _new_workdir() -> str:
+    workdir = os.path.join("/tmp", f"snapshot-verify-{uuid.uuid4().hex}")
+    return workdir
 
-def create_bf_session(retries: int = 6, delay: int = 5):
-    """Try to create a Batfish Session with retries.
+def _copy_base_snapshot_to(workdir: str):
+    if not os.path.isdir(SNAPSHOT_BASE):
+        raise FileNotFoundError(f"Base snapshot folder not found: {SNAPSHOT_BASE}")
+    shutil.copytree(SNAPSHOT_BASE, workdir)
 
-    Uses environment variables BATFISH_HOST and BATFISH_PORT if set,
-    otherwise defaults to localhost:9997 (matches the docker run mapping).
+def _find_device_config_file(snapshot_dir: str, device: str) -> Optional[str]:
     """
-    global bf, bfq
-    host = os.getenv("BATFISH_HOST", "localhost")
-    port = int(os.getenv("BATFISH_PORT", "9997"))
-
-    for attempt in range(1, retries + 1):
-        try:
-            logging.info(f"Attempting to connect to Batfish at {host}:{port} (attempt {attempt}/{retries})")
-            bf = Session(host=host, port=port)
-            bfq = bf.q
-            logging.info("Connected to Batfish session")
-            return bf
-        except Exception as e:
-            logging.warning(f"Unable to create Batfish session (attempt {attempt}): {e}")
-            bf = None
-            bfq = None
-            if attempt < retries:
-                time.sleep(delay)
-
-    logging.error("Failed to establish Batfish session after retries")
+    Try common locations/extensions to find the device config in the snapshot.
+    We support:
+      snapshot_dir/configs/{device}.cfg
+      snapshot_dir/configs/{device}.txt
+      snapshot_dir/{device}.cfg
+      snapshot_dir/{device}.txt
+    """
+    candidates = [
+        os.path.join(snapshot_dir, "configs", f"{device}.cfg"),
+        os.path.join(snapshot_dir, "configs", f"{device}.txt"),
+        os.path.join(snapshot_dir, f"{device}.cfg"),
+        os.path.join(snapshot_dir, f"{device}.txt"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
     return None
 
+def _apply_config_to_device(snapshot_dir: str, device: str, commands: List[str]):
+    cfg_path = _find_device_config_file(snapshot_dir, device)
+    if not cfg_path:
+        # If the device file is missing, create it inside configs
+        cfg_dir = os.path.join(snapshot_dir, "configs")
+        os.makedirs(cfg_dir, exist_ok=True)
+        cfg_path = os.path.join(cfg_dir, f"{device}.cfg")
+        # Create a minimal header to be friendlier to some vendors; adjust as needed
+        with open(cfg_path, "w") as f:
+            f.write(f"! Auto-created for {device}\n!\n")
 
-# Try creating session on import/startup but tolerate failure (container may not be up yet)
-create_bf_session(retries=3, delay=3)  # short initial attempts; functions will retry if needed
+    # Naive "append" strategy (idempotency up to you; dedup not attempted here)
+    with open(cfg_path, "a") as f:
+        f.write("\n!\n! --- LLM proposed changes ---\n")
+        for line in commands:
+            f.write(f"{line}\n")
+        f.write("! --- end changes ---\n")
 
-# Define snapshot name and path globally
-snapshot_name = "snapshot"  # unified snapshot name
-SNAPSHOT_PATH = r"C:\Users\Hassa\Desktop\P003-LLM\03_AGENT_VALIDATION\batfish"
+def _apply_all_changes(snapshot_dir: str, changes: Dict[str, List[str]]) -> List[str]:
+    changed_devices = []
+    for device, cmds in (changes or {}).items():
+        if not isinstance(cmds, list) or not cmds:
+            # Skip empty command sets to avoid empty diffs
+            continue
+        _apply_config_to_device(snapshot_dir, device, cmds)
+        changed_devices.append(device)
+    return changed_devices
 
-def snapshot_init():
-    global bf, snapshot_name, SNAPSHOT_PATH
-    # Ensure we have a Batfish session (try to create one if missing)
-    if bf is None:
-        logging.info("No Batfish session, attempting to create one before snapshot init...")
-        create_bf_session(retries=5, delay=2)
-        if bf is None:
-            print("Batfish session not available, cannot init snapshot.")
-            return
-    try:
-        NETWORK_NAME = "network-test-4routers"
-        bf.set_network(NETWORK_NAME)
-        # Initialize snapshot from local directory
-        bf.init_snapshot(SNAPSHOT_PATH, name=snapshot_name, overwrite=True)
-        print("Snapshot loaded")
-    except Exception as e:
-        print(f"Error during snapshot initialization: {str(e)}")
+def _init_snapshot(snapshot_dir: str, name: Optional[str] = None):
+    """
+    Initialize (or re-initialize) the Batfish snapshot from the given directory.
+    """
+    _ensure_network()
+    snapshot_name = name or os.path.basename(snapshot_dir.rstrip("/"))
+    bf.init_snapshot(snapshot_dir, name=snapshot_name, overwrite=True)
+    return snapshot_name
 
+def _run_cp(changed_devices: List[str]):
+    """
+    Configuration Properties: we query interfaceProperties.
+    If 'changed_devices' is provided, we filter on those nodes; otherwise we return for all nodes.
+    """
+    q = bfq.interfaceProperties()
+    if changed_devices:
+        q = q.filter("?node", "in", changed_devices)
+    ans = q.answer()
+    frame = ans.frame() if ans else None
+    rows = 0 if (frame is None or frame.empty) else len(frame)
+    return {
+        "status": "PASS" if rows >= 0 else "FAIL",  # CP here is informational; you can tighten criteria if desired
+        "rows": rows
+    }
 
-@app.route('/verify', methods=['POST'])
-def verify_configuration():
-    global snapshot_name  # Declare snapshot_name as global
+def _run_tp():
+    """
+    Topology (L3). We return the edge count (informational).
+    """
+    ans = bfq.layer3Topology().answer()
+    frame = ans.frame() if ans else None
+    edges = 0 if (frame is None or frame.empty) else len(frame)
+    return {
+        "status": "PASS",   # Treat presence/absence as informational; change to policy-based PASS/FAIL if needed
+        "edges": edges
+    }
 
-    data = request.get_json()
+def _run_reach(paths: List[Dict[str, str]]):
+    """
+    Reachability for each requested src/dst pair. If none provided, default host1->host2.
+    """
+    results = []
+    if not paths:
+        paths = [{"src": DEFAULT_SRC_HOST, "dst": DEFAULT_DST_HOST}]
 
-    # Extract the verification details from the request
-    verification_type = data.get("verification_type", "DEFAULT")
-    commands = data.get("commands", [])
-    identifier = data.get("identifier", "DEFAULT")  # Default identifier if not provided
+    for p in paths:
+        src = p.get("src", DEFAULT_SRC_HOST)
+        dst = p.get("dst", DEFAULT_DST_HOST)
+        start = f"enter({src})"
+        end = f"enter({dst})"
 
-    # Apply the received configuration to Batfish (if applicable)
-    try:
-        if verification_type == "APPLY_CONFIG":
-            hostname = data.get("hostname", "")
-            # Apply received commands as a single file for the snapshot
-            if not bf:
-                raise RuntimeError("Batfish session not initialized")
-            bf.init_snapshot(input_text={f"{hostname}.cfg": "\n".join(commands)}, name=snapshot_name, overwrite=True)
-    except Exception as e:
-        return jsonify({"result": "Error", "error": str(e)})
-
-    # Proceed with the selected verification
-    try:
-        # Determine the type of Batfish question based on the identifier
-        if identifier == "CP":
-            # Configuration Properties question
-            result = bfq.interfaceProperties().answer()
-            resp = {"check": "CP", "frame": result.frame().to_dict() if not result.frame().empty else {}}
-            return jsonify({"result": "CP completed", "cp": resp})
-
-        elif identifier == "TP":
-            # Topology question
-            result = bfq.layer3Topology().answer()
-            resp = {"check": "TP", "frame": result.frame().to_dict() if not result.frame().empty else {}}
-            return jsonify({"result": "TP completed", "tp": resp})
-
-        elif identifier == "ALL":
-            # Run CP, TP and reachability sequentially and aggregate results
-            aggregated = {}
-            try:
-                cp_ans = bfq.interfaceProperties().answer()
-                aggregated['CP'] = cp_ans.frame().to_dict() if not cp_ans.frame().empty else {}
-            except Exception as e:
-                aggregated['CP_error'] = str(e)
-
-            try:
-                tp_ans = bfq.layer3Topology().answer()
-                aggregated['TP'] = tp_ans.frame().to_dict() if not tp_ans.frame().empty else {}
-            except Exception as e:
-                aggregated['TP_error'] = str(e)
-
-            try:
-                reach_ans = bfq.reachability(
-                    pathConstraints=PathConstraints(startLocation="enter(h1)", endLocation="enter(h2)")
-                ).answer()
-                aggregated['REACH'] = reach_ans.frame().to_dict() if not reach_ans.frame().empty else {}
-            except Exception as e:
-                aggregated['REACH_error'] = str(e)
-
-            return jsonify({"result": "ALL completed", "aggregated": aggregated})
-
-        else:
-            # Default to reachability check
-            result = bfq.reachability(
-                pathConstraints=PathConstraints(startLocation="enter(h1)", endLocation="enter(h2)")
+        try:
+            ans = bfq.reachability(
+                pathConstraints=PathConstraints(startLocation=start, endLocation=end)
             ).answer()
-            if result.frame().empty:
-                return jsonify({"result": "Successful"})
-            else:
-                return jsonify({"result": "Verification failed", "details": result.frame().to_dict()})
-    except Exception as e:
-        # Print the specific error message
-        print(f"Error during verification: {str(e)}")
-        return jsonify({"result": "Error during verification", "error": str(e)})
+            frame = ans.frame() if ans else None
+            # If the answer frame has at least one row, Batfish found reachable flows (depending on query settings)
+            reachable = False if (frame is None or frame.empty) else True
+            results.append({
+                "src": src,
+                "dst": dst,
+                "status": "PASS" if reachable else "FAIL"
+            })
+        except Exception as e:
+            results.append({
+                "src": src,
+                "dst": dst,
+                "status": "ERROR",
+                "error": str(e)
+            })
+    return results
 
-
-@app.route('/syntax', methods=['POST'])
-def syntax_checker_route():
-    data = request.get_json()
-
-    # Extract the configuration commands from the request
-    commands = data.get("commands", [])
-
-    # Perform syntax check (ensure function exists)
-    try:
-        if 'syntax_checker' not in globals():
-            logging.info('No syntax_checker found, using fallback stub')
-            # fallback stub implemented below will be used
-        syntax_check_result = syntax_checker(commands)
-        return jsonify(syntax_check_result)
-    except Exception as e:
-        return jsonify({"result": "Error", "error": str(e)})
-
-
-@app.route('/llm_response', methods=['POST'])
-def apply_llm_response():
-    data = request.get_json()
-
-    # Extract the LLM response details from the request
-    device_name = data.get("device_name", "")
-    llm_response = data.get("llm_response", [])
-
-    try:
-        # Apply the received LLM response to Batfish
-        # Use the configured SNAPSHOT_PATH by default (fallback to provided path param)
-        spath = SNAPSHOT_PATH
-        apply_config_to_device(spath, device_name, "\n".join(llm_response))
-        return jsonify({"result": "Successful"})
-    except Exception as e:
-        return jsonify({"result": "Error during LLM response application", "error": str(e)})
-
-
-def apply_config_to_device(snapshot_path, device_name, llm_response):
-    # existing helper functions (read_snapshot_config, update_existing_config, generate_cisco_config)
-    # Defensive: ensure helper functions exist (stubs provided below)
-    existing_config = read_snapshot_config(snapshot_path, device_name)
-    new_cfg_piece = generate_cisco_config(llm_response, device_name)
-    new_config = update_existing_config(existing_config, new_cfg_piece)
-
-    # Ensure Batfish session exists
-    if not bf:
-        logging.info("Batfish session missing in apply_config_to_device, attempting to create one...")
-        create_bf_session(retries=5, delay=2)
-    if not bf:
-        raise RuntimeError("Batfish session not initialized")
-
-    # send the updated config as a single file into the snapshot
-    bf.init_snapshot(input_text={f"{device_name}.cfg": new_config}, name=snapshot_name, overwrite=True)
-
-
-
-@app.route('/topology', methods=['GET'])
-def get_topology():
-    try:
-        frame = bf.q.layer3Edges().answer().frame()
-        return jsonify({"topology": frame.to_dict()})
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-
-def read_config_file(file_path):
-    with open(file_path, 'r') as file:
-        return file.read()
-
-
-# ---------------------------
-# Development stubs (replace with real implementations)
-# ---------------------------
-def syntax_checker(commands):
-    """Simple syntax checker stub.
-
-    Replace this with a real parser/validator. For now it checks for empty input
-    and returns a dict describing basic findings.
+# -------------------------
+# API
+# -------------------------
+@app.route("/evaluate", methods=["POST"])
+def evaluate():
     """
-    if not commands:
-        return {"ok": False, "errors": ["No commands provided"]}
-    # naive check: ensure every command ends with a newline or looks like text
-    return {"ok": True, "errors": []}
-
-
-def read_snapshot_config(snapshot_path, device_name):
-    """Read the existing device config from a snapshot directory if present.
-
-    This stub looks for a file named <device_name>.cfg in snapshot_path and
-    returns its text, or an empty string if missing.
+    Expected input (LLM team only provides changes; verifier runs all checks):
+    {
+      "changes": {
+        "R1": ["interface g0/0", "description from-llm"],
+        "R2": ["router ospf 100", "network 10.0.0.0 0.0.0.255 area 0"]
+      },
+      "intent": {
+        "reach": [{"src":"host1","dst":"host2"}]  // optional; defaults used if omitted
+      }
+    }
     """
-    cfg_file = os.path.join(snapshot_path, f"{device_name}.cfg")
+    payload = request.get_json(silent=True) or {}
+    changes = payload.get("changes", {}) or {}
+    intent = payload.get("intent", {}) or {}
+    reach_paths = intent.get("reach", []) if isinstance(intent.get("reach", []), list) else []
+
+    # 1) Prepare a fresh work snapshot
+    workdir = _new_workdir()
     try:
-        return read_config_file(cfg_file)
-    except Exception:
-        return ""
+        _copy_base_snapshot_to(workdir)
+    except Exception as e:
+        return jsonify({"result": "ERROR", "stage": "COPY_BASE_SNAPSHOT", "error": str(e)}), 400
 
+    # 2) Apply LLM changes (if any) onto the work snapshot
+    try:
+        changed_devices = _apply_all_changes(workdir, changes)
+    except Exception as e:
+        # Clean up temp workdir before returning
+        shutil.rmtree(workdir, ignore_errors=True)
+        return jsonify({"result": "ERROR", "stage": "APPLY_CHANGES", "error": str(e)}), 400
 
-def update_existing_config(existing_config: str, new_piece: str) -> str:
-    """Merge existing_config with new_piece. This stub appends the new piece.
+    # 3) Initialize the snapshot in Batfish
+    try:
+        snapshot_name = _init_snapshot(workdir)
+    except Exception as e:
+        shutil.rmtree(workdir, ignore_errors=True)
+        return jsonify({"result": "ERROR", "stage": "INIT_SNAPSHOT", "error": str(e)}), 400
 
-    A realistic implementation should merge intelligently.
-    """
-    if not existing_config:
-        return new_piece
-    return existing_config + "\n" + new_piece
+    # 4) Run CP, TP, Reachability
+    try:
+        cp_summary = _run_cp(changed_devices)
+        tp_summary = _run_tp()
+        reach_summary = _run_reach(reach_paths)
+    except Exception as e:
+        shutil.rmtree(workdir, ignore_errors=True)
+        return jsonify({"result": "ERROR", "stage": "VERIFY", "error": str(e)}), 500
 
+    # 5) Summarize + cleanup
+    resp = {
+        "result": "OK",
+        "snapshot": snapshot_name,
+        "summary": {
+            "CP": cp_summary,
+            "TP": tp_summary,
+            "REACH": reach_summary
+        }
+    }
 
-def generate_cisco_config(llm_response: str, device_name: str) -> str:
-    """Convert an LLM response (text) into a Cisco-style config snippet.
+    # Remove the temp snapshot folder. If you prefer keeping it for debugging, comment this out.
+    shutil.rmtree(workdir, ignore_errors=True)
 
-    This stub simply returns the raw response.
-    """
-    return llm_response
+    return jsonify(resp), 200
 
+# -------------------------
+# Health
+# -------------------------
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "up"}), 200
 
-
-if __name__ == '__main__':
-    snapshot_init()
-    app.run(host='0.0.0.0', port=5000) # Anounce the application on every IP or change batfish_ip to the batfish docker ip
+# -------------------------
+# Main
+# -------------------------
+if _name_ == "_main_":
+    # Ensure network exists (no-op if already created)
+    _ensure_network()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
