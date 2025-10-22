@@ -11,20 +11,38 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env'))
 
 from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
 
-# --- SETUP FROM keys.env (no hardcoded defaults) ---
-CONFIG = {
-    'llama': {
-        'model': 'zephyr_configurator',
-        'api_link': os.getenv('LLAMA_API_LINK'),
-        'api_key': os.getenv('LLAMA_API_KEY'),
-        'supports_rag': True
-    },
-    'gemini': {
-        'model': 'gemini-2.5-flash',
-        'api_key': os.getenv('GEMINI_API_KEY'),
-        'supports_rag': True
-    }
-}
+# --- LOAD CONFIG FROM inference.json ---
+def load_config():
+    """Load model configuration from inference.json"""
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'inference.json')
+    with open(config_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    # Resolve environment variables for API keys and links
+    config = {}
+    for model_name, model_config in data.items():
+        config[model_name] = {
+            'model': model_config.get('model'),
+            'supports_rag': model_config.get('supports_rag', False)
+        }
+        
+        # Resolve API key from environment
+        if 'api_key_env' in model_config:
+            config[model_name]['api_key'] = os.getenv(model_config['api_key_env'])
+        
+        # Resolve API link from environment (for local models)
+        if 'api_link_env' in model_config:
+            config[model_name]['api_link'] = os.getenv(model_config['api_link_env'])
+        
+        # Additional settings for local models
+        if 'stream' in model_config:
+            config[model_name]['stream'] = model_config['stream']
+        if 'context_param' in model_config:
+            config[model_name]['context_param'] = model_config['context_param']
+    
+    return config
+
+CONFIG = load_config()
 
 # Configuration for external retrieval service (from env only)
 RETRIEVAL_SERVICE_URL = os.getenv("RETRIEVAL_SERVICE_URL")
