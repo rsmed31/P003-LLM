@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 # Import your existing generate() method from Team 2’s inference module
 # It must return a JSON string like: {"model": "<model_name>", "response": "<text or commands>"}
-from inference import generate
+from endpoints.inference import generate
 
 app = FastAPI(
     title="Team 2 - getAnswer API",
