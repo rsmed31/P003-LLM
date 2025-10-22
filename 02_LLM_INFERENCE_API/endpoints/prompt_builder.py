@@ -50,25 +50,22 @@ def load_system_instructions(system_source_path: str) -> str:
 
 # --- END MODULARITY SETUP ---
 
-def build_context_block(factual_data_str: str, filtered_context_str: str) -> str | None:
+def build_context_block(filtered_context_str: str) -> str | None:
     """
-    Build the combined context block (Target Devices + Protocol Facts).
+    Build the context block from retrieval service chunks only.
+    No PostgreSQL integration - all context comes from external retrieval endpoint.
     """
-    blocks = []
-    if factual_data_str and factual_data_str.strip():
-        # This includes Target Devices and Details (Factual/PostgreSQL Data)
-        blocks.append("## TARGET DEVICES AND DETAILS (Factual/PostgreSQL Data):\n" + factual_data_str.strip())
-    if filtered_context_str and filtered_context_str.strip():
-        # This includes Protocol Facts and VPP Error Report (Content/FAISS Data)
-        blocks.append("## PROTOCOL FACTS AND ERRORS (Content/FAISS Data):\n" + filtered_context_str.strip())
-    return "\n\n".join(blocks) if blocks else None
+    if not filtered_context_str or not filtered_context_str.strip():
+        return None
+    
+    # Single header: Protocol Facts and Errors (from retrieval service)
+    return "## PROTOCOL FACTS AND ERRORS (Retrieved Context):\n" + filtered_context_str.strip()
 
 
 # --- ASSEMBLY FUNCTIONS ---
 
 def assemble_rag_prompt(
     system_file_path: str,
-    factual_data_str: str,
     filtered_context_str: str,
     user_query_str: str
 ) -> str:
@@ -77,7 +74,7 @@ def assemble_rag_prompt(
     """
     
     parts = load_prompt_parts(system_file_path)
-    combined_context = build_context_block(factual_data_str, filtered_context_str) or "No contextual data available."
+    combined_context = build_context_block(filtered_context_str) or "No contextual data available."
     
     # Assemble the modular template using retrieved parts and the core user data
     modular_template = f"""
@@ -111,7 +108,6 @@ def assemble_rag_prompt(
 
 def assemble_rag_prompt_gemini(
     system_file_path: str,
-    factual_data_str: str,
     filtered_context_str: str,
     user_query_str: str
 ) -> str:
@@ -122,8 +118,6 @@ def assemble_rag_prompt_gemini(
     ----------
     system_file_path : str
         Path to the system JSON file (e.g., prompts.json).
-    factual_data_str : str
-        Factual knowledge retrieved from structured data or database.
     filtered_context_str : str
         Retrieved context (e.g., from FAISS or embeddings search).
     user_query_str : str
@@ -139,7 +133,7 @@ def assemble_rag_prompt_gemini(
 
     # --- Combine contextual data blocks ---
     combined_context = build_context_block(
-        factual_data_str, filtered_context_str
+         filtered_context_str
     ) or "No contextual data available."
 
     # --- Construct modular Gemini prompt ---
