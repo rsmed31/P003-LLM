@@ -217,46 +217,107 @@ def generate(
 
 # --- EXAMPLE USAGE ---
 
+# if __name__ == "__main__":
+#     model_name = "gemini"  # Set to use the local LLama/Zephyr model
+    
+#     # --- Define Placeholder Variables for FULL RAG Test (BGP Configuration) ---
+
+#     # 1. Configuration Goal (User Query)
+#     user_query = "Configure BGP peering between R1 and R2 using AS 65000. Use direct interface IPs for peering. Set router IDs manually."
+
+#     # 2. Target Devices and Details (Factual/PostgreSQL Data)
+#     target_devices_details = """
+# * R1: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.1/30, L0: 1.1.1.1/32}. BGP AS: 65000.
+# * R2: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.2/30, L0: 2.2.2.2/32}. BGP AS: 65000.
+# """
+
+#     # 3. Protocol Facts (Content/FAISS Data) + 4. VPP Error Report (combined for demonstration)
+#     protocol_facts_and_errors = """
+# **Protocol Facts:** The BGP command to start the process is 'router bgp <AS_number>'. The neighbor command is 'neighbor <remote_IP> remote-as <remote_AS>'. The router-id command is 'bgp router-id <id>' or 'router-id <id>' depending on the model/IOS version. Layer 2 commands (like 'switchport') can ONLY be applied to Switch devices.
+# **VPP Error Report (OPTIONAL):** No errors reported in previous attempt. This is the first run.
+# """
+    
+#     print("--- Test 1: Simple query without RAG (for baseline) ---")
+#     try:
+#         response = generate(
+#             model_name=model_name,
+#             prompt="What is BGP?",
+#             factual_data="",
+#             filtered_context=""
+#         )
+#         print(response)
+#     except Exception as e:
+#         print(f"Error: {e}")
+
+#     print("\n--- Test 2: Query with FULL RAG context (BGP Test) ---")
+#     try:
+#         response = generate(
+#             model_name=model_name,
+#             prompt=user_query,
+#             factual_data=target_devices_details,
+#             filtered_context=protocol_facts_and_errors
+#         )
+#         print(response)
+#     except Exception as e:
+#         print(f"Error: {e}")
+
+def generate_final_prompt(
+    system_json_path: str,
+    factual_data: str,
+    context_data: str,
+    user_goal: str,
+    model_type: str = "gemini"
+):
+    """
+    Generate and print the final network configuration prompt using the modular system.
+
+    Parameters
+    ----------
+    system_json_path : str
+        Path to the 'prompts.json' file containing all modular prompt parts.
+    factual_data : str
+        Factual data block (e.g., target device info from database).
+    context_data : str
+        Contextual or protocol-related data (e.g., retrieved from FAISS).
+    user_goal : str
+        The user's configuration goal (e.g., 'Enable OSPF on R1 and R2').
+    model_type : str, optional
+        Which model format to use for assembling the prompt:
+        - "gemini" → plain text (for Google Gemini API)
+        - "local" → uses <|system|> and <|user|> chat format (for Llama/Zephyr)
+    """
+    if model_type.lower() == "gemini":
+        final_prompt = assemble_rag_prompt_gemini(
+            system_file_path=system_json_path,
+            factual_data_str=factual_data,
+            filtered_context_str=context_data,
+            user_query_str=user_goal
+        )
+    else:
+        final_prompt = assemble_rag_prompt(
+            system_file_path=system_json_path,
+            factual_data_str=factual_data,
+            filtered_context_str=context_data,
+            user_query_str=user_goal
+        )
+
+    print(final_prompt)
+    return final_prompt
+
+
+# --- Example usage ---
 if __name__ == "__main__":
-    model_name = "gemini"  # Set to use the local LLama/Zephyr model
-    
-    # --- Define Placeholder Variables for FULL RAG Test (BGP Configuration) ---
+    # Example inputs
+    system_json_path = system_source = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'prompts.json')  # Path to your JSON file
+    factual_data = """
+    R1: Cisco ISR 4321, interfaces Gi0/0 and Gi0/1, connected to R2
+    R2: Cisco ISR 4331, interfaces Gi0/0 and Gi0/1, connected to R1
+    """
+    context_data = """
+    OSPF configuration requires router-id, network statements, and area IDs.
+    Default verification command: 'show ip ospf neighbor'
+    """
+    user_goal = "Configure OSPF area 0 between R1 and R2 with router-ids 1.1.1.1 and 2.2.2.2 respectively."
 
-    # 1. Configuration Goal (User Query)
-    user_query = "Configure BGP peering between R1 and R2 using AS 65000. Use direct interface IPs for peering. Set router IDs manually."
-
-    # 2. Target Devices and Details (Factual/PostgreSQL Data)
-    target_devices_details = """
-* R1: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.1/30, L0: 1.1.1.1/32}. BGP AS: 65000.
-* R2: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.2/30, L0: 2.2.2.2/32}. BGP AS: 65000.
-"""
-
-    # 3. Protocol Facts (Content/FAISS Data) + 4. VPP Error Report (combined for demonstration)
-    protocol_facts_and_errors = """
-**Protocol Facts:** The BGP command to start the process is 'router bgp <AS_number>'. The neighbor command is 'neighbor <remote_IP> remote-as <remote_AS>'. The router-id command is 'bgp router-id <id>' or 'router-id <id>' depending on the model/IOS version. Layer 2 commands (like 'switchport') can ONLY be applied to Switch devices.
-**VPP Error Report (OPTIONAL):** No errors reported in previous attempt. This is the first run.
-"""
-    
-    print("--- Test 1: Simple query without RAG (for baseline) ---")
-    try:
-        response = generate(
-            model_name=model_name,
-            prompt="What is BGP?",
-            factual_data="",
-            filtered_context=""
-        )
-        print(response)
-    except Exception as e:
-        print(f"Error: {e}")
-
-    print("\n--- Test 2: Query with FULL RAG context (BGP Test) ---")
-    try:
-        response = generate(
-            model_name=model_name,
-            prompt=user_query,
-            factual_data=target_devices_details,
-            filtered_context=protocol_facts_and_errors
-        )
-        print(response)
-    except Exception as e:
-        print(f"Error: {e}")
+    # Generate and print final prompt for Gemini
+    generate_final_prompt(system_json_path, factual_data, context_data, user_goal, model_type="gemini")
