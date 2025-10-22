@@ -53,40 +53,27 @@ def build_context_block(
         return None
     else:
         return "## PROCEDURAL CONTEXT (Documentation/Examples):\n" + filtered_context_str.strip()
-    # Build the combined context block once using functional/trust labels.
-    # Returns a string or None if no context is provided.
-
-"""
-    blocks = []
-    if factual_data_str and factual_data_str.strip():
-        # This now matches the 'Target Devices and Details' from the RIGID_PROMPT_TEMPLATE
-        blocks.append("## TARGET DEVICES AND DETAILS (Factual/PostgreSQL Data):\n" + factual_data_str.strip())
-    if filtered_context_str and filtered_context_str.strip():
-        # This now matches the 'Protocol Facts' and 'VPP Error Report' from the RIGID_PROMPT_TEMPLATE
-        blocks.append("## PROTOCOL FACTS AND ERRORS (Content/FAISS Data):\n" + filtered_context_str.strip())
-    return "\n\n".join(blocks) if blocks else None
 
 
 # --- START OF CUSTOM PROMPT TEMPLATE ---
 # This static text defines the rigid rules and schema, incorporating RAG data dynamically.
 
-RIGID_PROMPT_TEMPLATE = 
-"""
-"""
-# **CRITICAL RULE:** Your entire response MUST be a single, complete JSON array. This array MUST be the ONLY text in your response. Do not include any natural language introduction, explanations, notes, or apologies. Do not include the JSON markdown delimiters (`json ... `).
+RIGID_PROMPT_TEMPLATE = """
+# CRITICAL RULE
+Your entire response MUST be a single, complete JSON array. This array MUST be the ONLY text in your response. Do not include any natural language introduction, explanations, notes, or apologies. Do not include any JSON markdown fences.
 
-# TASK: Generate the configuration commands necessary to fulfill the requested Goal for all specified devices.
+# TASK
+Generate the configuration commands necessary to fulfill the requested Goal for all specified devices.
 
-# SITUATION & CONSTRAINTS (Data Injected by Python):
-
-1. **Configuration Goal (User Query):**
+# SITUATION & CONSTRAINTS (Data Injected by Python)
+1. Configuration Goal (User Query):
 {user_query_str}
 
-2. **Contextual Knowledge Base (RAG Data):**
+2. Contextual Knowledge Base (RAG Data):
 {combined_context}
 
-# REQUIRED JSON SCHEMA:
-The response MUST be a JSON array containing an object for EACH device that requires configuration changes, strictly conforming to this structure. Note that the command list should be executed sequentially, starting from the device's global configuration mode (e.g., `configure terminal`).
+# REQUIRED JSON SCHEMA
+Respond with a JSON array. Include one object per device:
 
 [
   {{
@@ -94,12 +81,11 @@ The response MUST be a JSON array containing an object for EACH device that requ
     "protocol": "string (e.g., OSPF, VLAN, BGP, INTERFACE-IP)",
     "configuration_mode_commands": [
       "string (The first command, typically 'configure terminal' if needed)",
-      "string (The second command)",
-      // ... continue with all commands in the correct sequence
+      "string (The second command)"
     ],
     "verification_command": "string (e.g., show ip ospf neighbor or show vlan brief)"
   }}
-  // ... continue for all other devices
+  // ... continue for other devices
 ]
 """
 # --- END OF CUSTOM PROMPT TEMPLATE ---

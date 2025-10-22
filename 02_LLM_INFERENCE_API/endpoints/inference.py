@@ -6,30 +6,40 @@ from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-# Assuming prompt_builder.py is in the same directory (or accessible via path)
+# Load environment variables first
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env'))
+
 from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
 
-# --- SETUP (PLACEHOLDER CONFIGURATION) ---
-# NOTE: In a real environment, you would set up your keys.env and inference.json files.
-# Mocking a basic CONFIG structure for the script to run:
+# --- SETUP FROM keys.env ---
 CONFIG = {
     'llama': {
         'model': 'zephyr_configurator',
-        'api_link': 'http://localhost:11434/api/generate',
+        'api_link': os.getenv('LLAMA_API_LINK', 'http://localhost:11434/api/generate'),
+        'api_key': os.getenv('LLAMA_API_KEY', ''),
         'supports_rag': True
     },
     'gemini': {
         'model': 'gemini-2.5-flash',
-        'api_key_env': 'GEMINI_API_KEY',
+        'api_key': os.getenv('GEMINI_API_KEY', ''),
         'supports_rag': True
     }
 }
-# Mocking a function to get config values
+
+# Configuration for external retrieval service (not localhost - external service)
+RETRIEVAL_SERVICE_URL = os.getenv("RETRIEVAL_SERVICE_URL", "http://external-service:5000/api/retrieve")
 
 def get_config_value(config, key):
     return config.get(key, "")
 
-# --- LLM CALL FUNCTIONS (as provided by user) ---
+# Default orchestrator (optional, for local testing only)
+try:
+    from retrieval import RetrievalOrchestrator
+    _DEFAULT_ORCHESTRATOR = RetrievalOrchestrator()
+except Exception:
+    _DEFAULT_ORCHESTRATOR = None
+
+# --- LLM CALL FUNCTIONS ---
 
 
 def configureGemini(apiKey, model_name, system_instructions=None):
@@ -118,145 +128,74 @@ def generate(
     factual_data: str = "",
     filtered_context: str = "",
     use_code_filter: bool = True,
-    use_triage: bool = True,
-    orchestrator = None  # Injected from app.py
+    use_triage: bool = False,
+    orchestrator = None
 ) -> str:
     """
-    Main inference function with integrated retrieval triage.
+    Main inference function with external retrieval service integration.
     
     Args:
-        model_name: "gemini" or local model name
+        model_name: "gemini" or "llama"
         prompt: User's query
+        filtered_context: Pre-fetched context (if already retrieved externally)
         use_code_filter: Apply code-aware filtering
-        use_triage: Use retrieval orchestrator triage logic
-        orchestrator: RetrievalOrchestrator instance (injected)
+        use_triage: DEPRECATED - use external retrieval service instead
+        orchestrator: DEPRECATED - use external retrieval service
     
     Returns:
-        JSON string with {model, response} or direct definitive answer
+        JSON string with {model, response}
     """
-    # Import here to avoid circular dependency
-    if orchestrator is None:
-        from app import RETRIEVAL_ORCHESTRATOR
-        orchestrator = RETRIEVAL_ORCHESTRATOR
-    
-    config = CONFIG.get(model_name, CONFIG["llama"]) if model_name != "gemini" else CONFIG["gemini"]
-    
-    # Get actual values from environment (mocked)
-    api_key = get_config_value(config, 'api_key')
-    api_link = get_config_value(config, 'api_link')
-    api_key = get_config_value(config, "api_key")
-    api_link = get_config_value(config, "api_link")
-    
-    # RAG is used if the model supports it AND there is contextual data provided.
-    use_rag = config.get('supports_rag', False) and (factual_data or filtered_context)
-    
-    # Define the path to the prompts.json file
-    system_source = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'prompts.json')
-    
-    # Execute retrieval triage if enabled
-    if use_triage and config.get("supports_rag", False):
-        triage_result = orchestrator.retrieve_with_triage(prompt)
-        
-        if triage_result["route"] == "definitive":
-            return json.dumps({
-                "model": "retrieval_triage",
-                "response": triage_result["factual_data"],
-                "confidence": triage_result["confidence"],
-                "route": "definitive"
-            }, indent=2)
-        
-        filtered_context = triage_result["filtered_context"]
-        factual_data = triage_result["factual_data"]
-        use_rag = True
+    # Resolve model config
+    config = CONFIG.get(model_name, CONFIG["llama"])
+
+    # Resolve API credentials
+    if model_name == "gemini":
+        api_key = config.get('api_key')
+        api_link = None
     else:
-        use_rag = config.get("supports_rag", False) and (factual_data or filtered_context)
-    
+        api_key = config.get('api_key')
+        api_link = config.get('api_link')
+
+    # Path to system instructions
+    system_source = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'prompts.json')
+
+    # Fetch context from external retrieval service if not provided
+    if not filtered_context and config.get("supports_rag", False):
+        try:
+            response = requests.get(
+                RETRIEVAL_SERVICE_URL,
+                params={"query": prompt, "number": 5},
+                timeout=5
+            )
+            if response.status_code == 200:
+                data = response.json()
+                # External service returns { "chunks": [...] }
+                chunks = data.get("chunks", [])
+                filtered_context = "\n---\n".join(chunks) if chunks else ""
+        except Exception as e:
+            print(f"Warning: Failed to retrieve context from external service: {e}")
+            filtered_context = ""
+
+    # Determine whether to use RAG
+    use_rag = config.get('supports_rag', False) and bool(filtered_context)
+
     # Generate response via LLM
     if model_name == "gemini":
-        system_source = os.path.join(os.path.dirname(__file__), "..", "prompts", "prompts.json")
         system_instructions = load_system_instructions(system_source)
-
-        if use_rag:
-            assembled_prompt = assemble_rag_prompt_gemini(
-                system_source, factual_data, filtered_context, prompt
-            )
-            model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
-            print(f'The assembled prompt: {assembled_prompt}')
-            return callGemini(model, assembled_prompt)
-        else:
-            model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
-            return callGemini(model, prompt)
-        model = configureGemini(api_key, config["model"], system_instructions=system_instructions)
-        
-        assembled_prompt = (
-            assemble_rag_prompt_gemini(system_source, filtered_context, prompt, use_code_filter)
-            if use_rag
-            else prompt
-        )
+        model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
+        assembled_prompt = assemble_rag_prompt_gemini(
+            system_source,
+            filtered_context if use_rag else "",
+            prompt,
+            use_code_filter
+        ) if use_rag else prompt
         return callGemini(model, assembled_prompt)
     else:
-        # Local model (Ollama)
-        if use_rag:
-            # prompt_to_send will now be the fully assembled prompt including all RAG context
-            prompt_to_send = assemble_rag_prompt(system_source, factual_data, filtered_context, prompt)
-        else:
-            prompt_to_send = prompt
-        
-        return callLlama(api_link, prompt_to_send, api_key, model=config.get('model'))
-
-        # Local model
-        stream_flag = config.get("stream", False)
-        system_source = os.path.join(os.path.dirname(__file__), "..", "prompts", "prompts.json")
-        
-        prompt_to_send = (
-            assemble_rag_prompt(system_source, filtered_context, prompt, use_code_filter)
-            if use_rag
-            else prompt
-        )
-        return callLlama(api_link, prompt_to_send, api_key, model=config.get("model"), stream=stream_flag)
-
-# --- EXAMPLE USAGE ---
-
-if __name__ == "__main__":
-    model_name = "gemini"  # Set to use the local LLama/Zephyr model
-    
-    # --- Define Placeholder Variables for FULL RAG Test (BGP Configuration) ---
-
-    # 1. Configuration Goal (User Query)
-    user_query = "Configure BGP peering between R1 and R2 using AS 65000. Use direct interface IPs for peering. Set router IDs manually."
-
-    # 2. Target Devices and Details (Factual/PostgreSQL Data)
-    target_devices_details = """
-* R1: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.1/30, L0: 1.1.1.1/32}. BGP AS: 65000.
-* R2: Device Type: Router. Interfaces: {G0/0/0: 192.168.12.2/30, L0: 2.2.2.2/32}. BGP AS: 65000.
-"""
-
-    # 3. Protocol Facts (Content/FAISS Data) + 4. VPP Error Report (combined for demonstration)
-    protocol_facts_and_errors = """
-**Protocol Facts:** The BGP command to start the process is 'router bgp <AS_number>'. The neighbor command is 'neighbor <remote_IP> remote-as <remote_AS>'. The router-id command is 'bgp router-id <id>' or 'router-id <id>' depending on the model/IOS version. Layer 2 commands (like 'switchport') can ONLY be applied to Switch devices.
-**VPP Error Report (OPTIONAL):** No errors reported in previous attempt. This is the first run.
-"""
-    
-    print("--- Test 1: Simple query without RAG (for baseline) ---")
-    try:
-        response = generate(
-            model_name=model_name,
-            prompt="What is BGP?",
-            factual_data="",
-            filtered_context=""
-        )
-        print(response)
-    except Exception as e:
-        print(f"Error: {e}")
-
-    print("\n--- Test 2: Query with FULL RAG context (BGP Test) ---")
-    try:
-        response = generate(
-            model_name=model_name,
-            prompt=user_query,
-            factual_data=target_devices_details,
-            filtered_context=protocol_facts_and_errors
-        )
-        print(response)
-    except Exception as e:
-        print(f"Error: {e}")
+        # Local model (Ollama/Llama)
+        prompt_to_send = assemble_rag_prompt(
+            system_source,
+            filtered_context if use_rag else "",
+            prompt,
+            use_code_filter
+        ) if use_rag else prompt
+        return callLlama(api_link, prompt_to_send, api_key=api_key, model=config.get('model'))
