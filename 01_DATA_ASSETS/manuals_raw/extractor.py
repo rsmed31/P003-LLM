@@ -1,3 +1,4 @@
+
 import os
 import fitz  # PyMuPDF
 import re
@@ -114,6 +115,5 @@ def main(directory_path, output_file='requirements.csv', model='openchat:latest'
 
 # Run the main function with the path to your directory containing PDFs
 if __name__ == "__main__":
-    directory_path = '/Users/annevonderluehe/Documents/Unikram/Master/uni-master/Semster3/PSE-Saint_Etienne/docs'  # Replace with your actual directory path containing PDFs
+    directory_path = './'  # Replace with your actual directory path containing PDFs
     main(directory_path)
-
