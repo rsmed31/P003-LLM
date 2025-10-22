@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from pybatfish.client.session import Session
-from pybatfish.question import bfq
+
 from pybatfish.datamodel.flow import PathConstraints
 import os
 import shutil
@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 # -------------------------
 # Server & Batfish session
 # -------------------------
-app = Flask(_name_)
+app = Flask(__name__)
 bf = Session(host=os.environ.get("BATFISH_HOST", "localhost"))  # e.g., "batfish" in docker-compose
 
 # -------------------------
@@ -18,10 +18,10 @@ bf = Session(host=os.environ.get("BATFISH_HOST", "localhost"))  # e.g., "batfish
 # -------------------------
 NETWORK_NAME = os.environ.get("BF_NETWORK_NAME", "network-test")
 # This is your pristine/base snapshot folder (must exist and be Batfish-compatible on disk)
-SNAPSHOT_BASE = os.environ.get("BF_SNAPSHOT_BASE", "./snapshot")
+SNAPSHOT_BASE = os.environ.get("BF_SNAPSHOT_BASE", os.path.dirname(os.path.abspath(__file__)))
 # Default host intent for reachability if none provided in the request
-DEFAULT_SRC_HOST = os.environ.get("REACH_SRC", "host1")
-DEFAULT_DST_HOST = os.environ.get("REACH_DST", "host2")
+DEFAULT_SRC_HOST = os.environ.get("REACH_SRC", "h1")
+DEFAULT_DST_HOST = os.environ.get("REACH_DST", "h2")
 
 # -------------------------
 # Helpers
@@ -96,36 +96,30 @@ def _init_snapshot(snapshot_dir: str, name: Optional[str] = None):
     return snapshot_name
 
 def _run_cp(changed_devices: List[str]):
-    """
-    Configuration Properties: we query interfaceProperties.
-    If 'changed_devices' is provided, we filter on those nodes; otherwise we return for all nodes.
-    """
-    q = bfq.interfaceProperties()
+    # Passe la liste des nœuds via l’argument "nodes" (si vide => toutes les interfaces)
     if changed_devices:
-        q = q.filter("?node", "in", changed_devices)
-    ans = q.answer()
+        ans = bf.q.interfaceProperties(nodes=changed_devices).answer()
+    else:
+        ans = bf.q.interfaceProperties().answer()
+
     frame = ans.frame() if ans else None
     rows = 0 if (frame is None or frame.empty) else len(frame)
-    return {
-        "status": "PASS" if rows >= 0 else "FAIL",  # CP here is informational; you can tighten criteria if desired
-        "rows": rows
-    }
+    return {"status": "PASS" if rows >= 0 else "FAIL", "rows": rows}
+
 
 def _run_tp():
-    """
-    Topology (L3). We return the edge count (informational).
-    """
-    ans = bfq.layer3Topology().answer()
+    # Dans l’API pybatfish, la question s’appelle "layer3Edges"
+    ans = bf.q.layer3Edges().answer()
     frame = ans.frame() if ans else None
     edges = 0 if (frame is None or frame.empty) else len(frame)
-    return {
-        "status": "PASS",   # Treat presence/absence as informational; change to policy-based PASS/FAIL if needed
-        "edges": edges
-    }
+    return {"status": "PASS", "edges": edges}
+
+
 
 def _run_reach(paths: List[Dict[str, str]]):
     """
-    Reachability for each requested src/dst pair. If none provided, default host1->host2.
+    Reachability for each requested src/dst pair. If none provided, default h1->h2.
+    Robust to pybatfish versions where Answer may not expose .frame() for reachability.
     """
     results = []
     if not paths:
@@ -134,21 +128,41 @@ def _run_reach(paths: List[Dict[str, str]]):
     for p in paths:
         src = p.get("src", DEFAULT_SRC_HOST)
         dst = p.get("dst", DEFAULT_DST_HOST)
-        start = f"enter({src})"
-        end = f"enter({dst})"
+
+        start_loc = src  # ex: "h1"
+        end_loc   = dst  # ex: "h2"
 
         try:
-            ans = bfq.reachability(
-                pathConstraints=PathConstraints(startLocation=start, endLocation=end)
+            ans = bf.q.reachability(
+                pathConstraints=PathConstraints(startLocation=start_loc, endLocation=end_loc)
             ).answer()
-            frame = ans.frame() if ans else None
-            # If the answer frame has at least one row, Batfish found reachable flows (depending on query settings)
-            reachable = False if (frame is None or frame.empty) else True
+
+            # 1) Essayer la voie "classique"
+            reachable = False
+            try:
+                frame = ans.frame()  # certaines versions ne l'ont pas pour reachability
+                reachable = (frame is not None) and (not frame.empty)
+            except Exception:
+                # 2) Fallback: lire le JSON brut
+                raw = getattr(ans, "raw", None)
+                if isinstance(raw, dict):
+                    # Le résumé contient souvent numResults
+                    summary = raw.get("summary") or {}
+                    num_results = summary.get("numResults")
+                    if isinstance(num_results, int):
+                        reachable = num_results > 0
+                    else:
+                        # Dernier recours: regarder les answerElements
+                        ae = raw.get("answerElements") or []
+                        # selon versions, il peut y avoir des traces/rows dedans
+                        reachable = len(ae) > 0
+
             results.append({
                 "src": src,
                 "dst": dst,
                 "status": "PASS" if reachable else "FAIL"
             })
+
         except Exception as e:
             results.append({
                 "src": src,
@@ -156,7 +170,9 @@ def _run_reach(paths: List[Dict[str, str]]):
                 "status": "ERROR",
                 "error": str(e)
             })
+
     return results
+
 
 # -------------------------
 # API
@@ -237,7 +253,8 @@ def health():
 # -------------------------
 # Main
 # -------------------------
-if _name_ == "_main_":
-    # Ensure network exists (no-op if already created)
+if __name__ == "__main__":
     _ensure_network()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    print(f"Using SNAPSHOT_BASE: {SNAPSHOT_BASE}")
+    print("Starting validator on http://0.0.0.0:8000 ...")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), debug=True)
