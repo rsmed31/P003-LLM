@@ -309,7 +309,7 @@ def generate(
         return json.dumps(clean, indent=2)
     else:
         # Local model (Ollama/Llama)
-        if use_rag:
+        if True:
             prompt_to_send = assemble_rag_prompt(
                 system_source,
                 filtered_context,
@@ -337,7 +337,7 @@ if __name__ == "__main__":
     try:
         response = generate(
             query="What is BGP?",
-            model_name="gemini"
+            model_name="llama"
         )
         print(response)
     except Exception as e:
@@ -347,7 +347,7 @@ if __name__ == "__main__":
     try:
         response = generate(
             query="Configure OSPF area 0 between R1 and R2 with router-ids 1.1.1.1 and 2.2.2.2 respectively.",
-            model_name="gemini"
+            model_name="llama"
         )
         print(response)
     except Exception as e:
