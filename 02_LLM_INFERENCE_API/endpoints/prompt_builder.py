@@ -156,3 +156,4 @@ def assemble_rag_prompt_gemini(
 """
 
     return modular_template.strip()
+

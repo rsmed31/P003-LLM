@@ -64,11 +64,12 @@ def configureGemini(apiKey, model_name, system_instructions=None):
 def callGemini(model, prompt):
     """Call Gemini and return clean JSON."""
     response = model.generate_content(prompt)
-    result = {
-        "model": model.model_name,
-        "response": response.text.strip() if response and hasattr(response, "text") else ""
-    }
-    return json.dumps(result, indent=2)
+    # result = {
+    #     "model": model.model_name,
+    #     "response": response.text.strip() if response and hasattr(response, "text") else ""
+    # }
+    # return json.dumps(result, indent=2)
+    return response.text.strip() if response and hasattr(response, "text") else ""
 
 
 def callLlama(api_link, prompt, api_key=None, model=None, stream=False):
@@ -91,12 +92,68 @@ def callLlama(api_link, prompt, api_key=None, model=None, stream=False):
     text_output = data.get("response") or data.get("text") or data.get("output") or ""
 
     # Clean output
-    clean = {
-        "model": model_name,
-        "response": text_output.strip()
-    }
-    return json.dumps(clean, indent=2)
+    # clean = {
+    #     "model": model_name,
+    #     "response": text_output.strip()
+    # }
+    # return json.dumps(clean, indent=2)
+    return text_output
 
+def clean_model_output(text: str) -> str:
+    """
+    Remove common wrappers the model might add: code fences, leading 'json' markers,
+    and leading/trailing whitespace. Preserve the inner JSON exactly.
+    """
+    if not text:
+        return text
+
+    t = text.strip()
+
+    # Remove ```json ... ``` or ``` ... ```
+    if t.startswith("```") and t.endswith("```"):
+        # strip the outer fences
+        # also drop leading "```json" markers if present
+        lines = t.splitlines()
+        # remove first and last lines (the fences)
+        if len(lines) >= 2:
+            inner = "\n".join(lines[1:-1]).strip()
+        else:
+            inner = ""
+        t = inner
+
+    # If startswith 'json\n' or 'json ' remove it
+    if t.lower().startswith("json\n") or t.lower().startswith("json "):
+        t = t.split("\n", 1)[1].strip() if "\n" in t else t[4:].strip()
+
+    # If model returned a quoted string with JSON inside quotation marks,
+    # try to unquote (handles cases like "\"[ ... ]\"" )
+    if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
+        try:
+            import ast
+            t = ast.literal_eval(t)
+        except Exception:
+            # leave as-is if eval fails
+            pass
+
+    return t
+
+def parse_and_validate_array(json_text: str):
+    try:
+        obj = json.loads(json_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {e}\nOutput was:\n{json_text}")
+
+    if not isinstance(obj, list):
+        raise ValueError("Model output is valid JSON but not a JSON array.")
+
+    # Basic per-item checks
+    for i, entry in enumerate(obj):
+        if not isinstance(entry, dict):
+            raise ValueError(f"Array element {i} is not an object.")
+        if 'device_name' not in entry or 'protocol' not in entry or 'configuration_mode_commands' not in entry:
+            raise ValueError(f"Array element {i} missing required keys.")
+        # you can add schema enforcement here...
+    return obj
 
 # --- MAIN GENERATION LOGIC ---
 
@@ -154,7 +211,7 @@ def generate(
         system_instructions = load_system_instructions(system_source)
         model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
         
-        if use_rag:
+        if True:
             assembled_prompt = assemble_rag_prompt_gemini(
                 system_source,
                 filtered_context,
@@ -162,8 +219,16 @@ def generate(
             )
         else:
             assembled_prompt = query
-            
-        return callGemini(model, assembled_prompt)
+        # print(assembled_prompt)
+        unCleanedResponse = callGemini(model, assembled_prompt)
+        # print(f"The model uncleaned response: {unCleanedResponse}")
+        cleanedResponse = clean_model_output(unCleanedResponse)
+        parsedObject = parse_and_validate_array(cleanedResponse)
+        clean = {
+            "model": model_name,
+            "response": parsedObject
+        }
+        return json.dumps(clean, indent=2)
     else:
         # Local model (Ollama/Llama)
         if use_rag:
@@ -174,8 +239,16 @@ def generate(
             )
         else:
             prompt_to_send = query
-        
-        return callLlama(api_link, prompt_to_send, api_key=api_key, model=config.get('model'))
+        unCleanedResponse = callLlama(api_link, prompt_to_send, api_key=api_key, model=config.get('model'))
+        # print(f"The model uncleaned response: {unCleanedResponse}")
+        cleanedResponse = clean_model_output(unCleanedResponse)
+        parsedObject = parse_and_validate_array(cleanedResponse)
+        # Clean output
+        clean = {
+            "model": model_name,
+            "response": parsedObject
+        }
+        return json.dumps(clean, indent=2)
 
 
 # --- EXAMPLE USAGE ---
