@@ -1,0 +1,30 @@
+FROM hf.co/ccaug/zephyr-config-agent-3:F16
+
+# Temperature set to 0.0 is crucial for non-creative, precise configuration output.
+PARAMETER temperature 0
+
+# --- MODIFIED TEMPLATE FOR RAG CONTEXT INJECTION ---
+TEMPLATE """
+{{- if .System }}
+<|system|>
+{{ .System }}
+</s>
+{{- end }}
+<|user|>
+{{- if .Context }}
+# CONTEXTUAL KNOWLEDGE BASE:
+{{ .Context }}
+
+{{- end }}
+# USER COMMAND:
+{{ .Prompt }}
+</s>
+<|assistant|>
+"""
+# --- END MODIFIED TEMPLATE ---
+
+# Stop parameters prevent the model from continuing the conversation structure
+PARAMETER stop "<|system|>"
+PARAMETER stop "<|user|>"
+PARAMETER stop "<|assistant|>"
+PARAMETER stop "</s>"
