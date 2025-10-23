@@ -8,7 +8,7 @@
         "model": "zephyr_configurator",
         "api_link_env": "LLAMA_API_LINK",
         "api_key_env": "LLAMA_API_KEY",
-        "supports_rag": true,
+        "supports_rag": false,
         "context_param": true,
         "stream": false
     }
