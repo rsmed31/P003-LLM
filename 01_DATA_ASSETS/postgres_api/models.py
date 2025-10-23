@@ -19,7 +19,7 @@ class QAResponse(BaseModel):
 class QAQueryResponse(BaseModel):
     """Response model for QA query endpoint."""
     found: bool
-    data: Optional[QAResponse] = None
+    answer: Optional[str] = None
     message: Optional[str] = None
 
 
@@ -39,11 +39,6 @@ class QACreateRequest(BaseModel):
         description="The answer text",
         examples=["OSPF (Open Shortest Path First) is a routing protocol..."]
     )
-    embedding: Optional[List[float]] = Field(
-        None, 
-        description="Optional embedding vector (384 dimensions for all-MiniLM-L6-v2)",
-        examples=[[0.1, 0.2, 0.3]]
-    )
     
     @field_validator('question', 'answer')
     @classmethod
@@ -52,24 +47,11 @@ class QACreateRequest(BaseModel):
         if v and not v.strip():
             raise ValueError("Text cannot be empty or only whitespace")
         return v.strip()
-    
-    @field_validator('embedding')
-    @classmethod
-    def validate_embedding(cls, v):
-        """Validate embedding vector if provided."""
-        if v is not None:
-            if len(v) != 384:  # Based on the sentence-transformers model dimension
-                raise ValueError("Embedding must have exactly 384 dimensions")
-            # Check for valid float values
-            if not all(isinstance(x, (int, float)) for x in v):
-                raise ValueError("All embedding values must be numeric")
-        return v
 
 
 class QACreateResponse(BaseModel):
     """Response model for creating a QA record."""
     message: str = Field(..., description="Response message describing the operation result")
-    id: Optional[int] = Field(None, description="ID of the created QA record", examples=[123])
     status: str = Field(
         ..., 
         description="Status of the operation",
@@ -83,7 +65,6 @@ class QACreateResponse(BaseModel):
             "examples": [
                 {
                     "message": "QA record created successfully",
-                    "id": 42,
                     "status": "created",
                     "question": "What is OSPF?",
                     "answer": "OSPF (Open Shortest Path First) is a routing protocol..."
@@ -100,7 +81,6 @@ class ErrorResponse(BaseModel):
 
 class TextChunkResponse(BaseModel):
     """Response model for text chunk records."""
-    source: str
     chunk_index: int
     text: str
     similarity: float = Field(..., ge=0.0, le=1.0, description="Similarity score")

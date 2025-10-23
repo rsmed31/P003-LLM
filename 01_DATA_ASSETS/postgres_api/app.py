@@ -10,9 +10,9 @@ from config import settings
 from db import (
     DatabasePool,
     query_qa_by_id,
-    query_qa_by_text_similarity,
-    insert_qa_record,
-    query_text_chunks_by_embedding
+    qaembedding,
+    readfromqa,
+    readfromdoc
 )
 from models import (
     QAResponse,
@@ -84,37 +84,37 @@ async def root():
 async def query_qa(
     text: str = Query(..., min_length=1, max_length=2000, description="Query text to search for"),
     threshold: float = Query(
-        default=settings.DEFAULT_SIMILARITY_THRESHOLD,
+        default=0.8,
         ge=0.0,
         le=1.0,
         description="Minimum similarity threshold (0.0 to 1.0)"
     )
 ):
     """
-    Query QA records using text similarity search.
+    Query QA records using vector similarity search.
     
     - **text**: The query text to search for (required)
-    - **threshold**: Minimum similarity score (default: 0.75)
+    - **threshold**: Minimum similarity score (default: 0.8)
     
-    Returns the best matching QA record if similarity >= threshold.
+    Returns the best matching QA answer if similarity >= threshold.
     """
     try:
         logger.info(f"Querying QA with text: '{text[:50]}...' (threshold: {threshold})")
         
-        result = query_qa_by_text_similarity(text, threshold)
+        answer = readfromqa(text, threshold)
         
-        if result:
-            logger.info(f"Found match with score: {result.get('score', 0):.3f}")
+        if answer:
+            logger.info(f"Found QA match")
             return QAQueryResponse(
                 found=True,
-                data=QAResponse(**result),
+                answer=answer,
                 message="Match found"
             )
         else:
             logger.info("No match found above threshold")
             return QAQueryResponse(
                 found=False,
-                data=None,
+                answer=None,
                 message=f"No match found with similarity >= {threshold}"
             )
     
@@ -184,39 +184,33 @@ async def get_qa_by_id(
 )
 async def create_qa(payload: QACreateRequest):
     """
-    Create a new QA record.
+    Create a new QA record with embedding.
     
     This endpoint creates a new QA record in the database with the provided
-    question, answer, and optional embedding vector.
+    question and answer. The embedding is automatically generated.
     
     - **question**: The question text (required)
     - **answer**: The answer text (required)
-    - **embedding**: Optional embedding vector (384 dimensions)
     
-    Returns the ID of the created record.
+    Returns success status.
     """
     try:
         logger.info(f"Received QA create request: question='{payload.question[:50]}...'")
         
-        # Validate payload (already done by Pydantic)
-        logger.info("Payload validation successful")
+        # Insert QA record with automatic embedding generation
+        success = qaembedding(payload.question, payload.answer)
         
-        # Insert QA record into database
-        qa_id = insert_qa_record(
-            question=payload.question,
-            answer=payload.answer,
-            embedding=payload.embedding
-        )
-        
-        logger.info(f"QA record created successfully with ID: {qa_id}")
-        
-        return QACreateResponse(
-            message="QA record created successfully",
-            id=qa_id,
-            status="created",
-            question=payload.question,
-            answer=payload.answer
-        )
+        if success:
+            logger.info(f"QA record created successfully")
+            
+            return QACreateResponse(
+                message="QA record created successfully",
+                status="created",
+                question=payload.question,
+                answer=payload.answer
+            )
+        else:
+            raise Exception("Failed to create QA record")
     
     except ValueError as e:
         logger.error(f"Validation error: {e}")
@@ -252,20 +246,13 @@ async def query_text_chunks(payload: TextChunksQueryRequest):
     - **query**: The query text to search for (required)
     - **limit**: Maximum number of results to return (default: 5, max: 50)
     
-    Returns a list of matching text chunks with source, chunk_index, text, and similarity score.
+    Returns a list of matching text chunks with chunk_index, text, and similarity score.
     """
     try:
-        # Import sentence transformers here to avoid loading at startup
-        from sentence_transformers import SentenceTransformer
-        
         logger.info(f"Querying text chunks with: '{payload.query[:50]}...' (limit: {payload.limit})")
         
-        # Encode query using the same model as in the test
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        query_embedding = model.encode(payload.query).tolist()
-        
-        # Query database
-        results = query_text_chunks_by_embedding(query_embedding, payload.limit)
+        # Query database using the new function
+        results = readfromdoc(payload.query, payload.limit)
         
         if results:
             logger.info(f"Found {len(results)} matching chunks")

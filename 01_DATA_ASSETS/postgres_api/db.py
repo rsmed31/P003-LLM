@@ -6,6 +6,7 @@ import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from config import settings
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ def get_db_connection():
         if conn:
             DatabasePool.return_connection(conn)
 
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 @contextmanager
 def get_db_cursor(dict_cursor: bool = False):
@@ -98,57 +100,6 @@ def query_qa_by_id(qa_id: int) -> Optional[dict]:
             return dict(result) if result else None
     except Exception as e:
         logger.error(f"Error querying QA by ID {qa_id}: {e}")
-        raise
-
-
-def query_qa_by_text_similarity(query_text: str, threshold: float = 0.75) -> Optional[dict]:
-    """
-    Query QA using text similarity (pg_trgm extension).
-    Returns the best match if similarity >= threshold.
-    """
-    try:
-        with get_db_cursor(dict_cursor=True) as cur:
-            # Enable pg_trgm extension for text similarity
-            cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-            
-            cur.execute("""
-                SELECT id, question, answer, 
-                       similarity(question, %s) AS score
-                FROM qa
-                WHERE similarity(question, %s) >= %s
-                ORDER BY score DESC
-                LIMIT 1
-            """, (query_text, query_text, threshold))
-            
-            result = cur.fetchone()
-            return dict(result) if result else None
-    except Exception as e:
-        logger.error(f"Error querying QA by text similarity: {e}")
-        raise
-
-
-def query_qa_by_vector_similarity(query_embedding: List[float], threshold: float = 0.75) -> Optional[dict]:
-    """
-    Query QA using vector similarity (pgvector).
-    This assumes the qa table has an embedding column.
-    Returns the best match if distance (converted to similarity) >= threshold.
-    """
-    try:
-        with get_db_cursor(dict_cursor=True) as cur:
-            # Using cosine distance, convert to similarity: 1 - distance
-            cur.execute("""
-                SELECT id, question, answer,
-                       1 - (embedding <=> %s::vector) AS score
-                FROM qa
-                WHERE (1 - (embedding <=> %s::vector)) >= %s
-                ORDER BY embedding <=> %s::vector
-                LIMIT 1
-            """, (query_embedding, query_embedding, threshold, query_embedding))
-            
-            result = cur.fetchone()
-            return dict(result) if result else None
-    except Exception as e:
-        logger.error(f"Error querying QA by vector similarity: {e}")
         raise
 
 
@@ -179,23 +130,109 @@ def insert_qa_record(question: str, answer: str, embedding: Optional[List[float]
         raise
 
 
-def query_text_chunks_by_embedding(query_embedding: List[float], limit: int = 5) -> List[dict]:
+# ============================================================================
+# Enhanced functions based on user requirements
+# ============================================================================
+
+def qaembedding(question: str, answer: str) -> bool:
     """
-    Query text_chunks using vector similarity.
-    Returns top N matches with source, chunk_index, text, and similarity score.
+    Insert a question-answer pair with its embedding into the qa table.
+    
+    Args:
+        question: The question text
+        answer: The answer text
+        
+    Returns:
+        True if successful, False otherwise
     """
     try:
+        # Generate embedding from the question
+        embedding = model.encode(question).tolist()
+        
+        with get_db_cursor() as cur:
+            cur.execute("""
+                INSERT INTO qa (question, answer, embedding)
+                VALUES (%s, %s, %s::vector)
+            """, (question, answer, embedding))
+        
+        logger.info(f"QA successfully saved to PostgreSQL: '{question[:50]}...'")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving QA to database: {e}")
+        raise
+
+
+def readfromqa(query: str, threshold: float = 0.8) -> Optional[str]:
+    """
+    Search for a similar question in the qa table and return the answer if similarity >= threshold.
+    
+    Args:
+        query: The query text to search for
+        threshold: Minimum similarity score (default: 0.8)
+        
+    Returns:
+        The answer string if a match is found with similarity >= threshold, None otherwise
+    """
+    try:
+        # Generate query embedding
+        query_emb = model.encode(query).tolist()
+        
         with get_db_cursor(dict_cursor=True) as cur:
             cur.execute("""
-                SELECT source, chunk_index, text,
+                SELECT question, answer,
+                       1 - (embedding <=> %s::vector) AS similarity
+                FROM qa
+                ORDER BY embedding <=> %s::vector
+                LIMIT 1;
+            """, (query_emb, query_emb))
+            
+            result = cur.fetchone()
+            
+            if result and result['similarity'] >= threshold:
+                logger.info(f"QA match found with similarity {result['similarity']:.3f}")
+                return result['answer']
+            else:
+                if result:
+                    logger.info(f"QA match found but similarity too low: {result['similarity']:.3f} < {threshold}")
+                else:
+                    logger.info("No QA match found")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error querying QA by similarity: {e}")
+        raise
+
+
+def readfromdoc(query: str, amount: int = 5) -> List[dict]:
+    """
+    Search for similar text chunks in the text_chunks table.
+    
+    Args:
+        query: The query text to search for
+        amount: Number of results to return (default: 5)
+        
+    Returns:
+        List of dictionaries containing chunk_index, text, and similarity score
+    """
+    try:
+        # Generate query embedding
+        query_emb = model.encode(query).tolist()
+        
+        with get_db_cursor(dict_cursor=True) as cur:
+            cur.execute("""
+                SELECT chunk_index, text,
                        1 - (embedding <=> %s::vector) AS similarity
                 FROM text_chunks
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s;
-            """, (query_embedding, query_embedding, limit))
+            """, (query_emb, query_emb, amount))
             
             results = cur.fetchall()
+            
+            logger.info(f"Found {len(results)} document chunks for query")
             return [dict(row) for row in results] if results else []
+            
     except Exception as e:
-        logger.error(f"Error querying text chunks by embedding: {e}")
+        logger.error(f"Error querying document chunks: {e}")
         raise
