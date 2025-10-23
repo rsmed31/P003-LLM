@@ -1,0 +1,15 @@
+{
+  "T0_BASE_URL": "http://t0:8000",
+  "T2_BASE_URL": "http://t2:8002",
+  "T3_BASE_URL": "http://t3:8003",
+  "T1_BASE_URL": "http://t1:8004",
+
+  "T0_ENDPOINT_QA_LOOKUP": "/qa_lookup",
+  "T2_ENDPOINT_GENERATE": "/generate_config",
+  "T3_ENDPOINT_VALIDATE": "/evaluate",
+  "T1_ENDPOINT_WRITE": "/verify_write",
+
+  "HTTP_TIMEOUT": 90,
+  "LOG_LEVEL": "INFO",
+  "GROQ_API_KEY": "your_groq_api_key_here"
+}
