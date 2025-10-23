@@ -45,7 +45,47 @@ def load_config():
 CONFIG = load_config()
 
 # Configuration for external retrieval service (from env only)
+# This is an external service endpoint - not part of this codebase
+# Example: http://192.168.103.100:8000/api/retrieve
 RETRIEVAL_SERVICE_URL = os.getenv("RETRIEVAL_SERVICE_URL")
+
+# --- LOAD RETRIEVAL CONFIG ---
+def load_retrieval_config():
+    """Load retrieval configuration with protocol-specific chunk counts"""
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'retrieval_config.json')
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Fallback defaults
+        return {
+            "default_chunks": 75,
+            "protocol_chunks": {}
+        }
+
+RETRIEVAL_CONFIG = load_retrieval_config()
+
+def detect_protocol_from_query(query: str) -> str:
+    """
+    Detect protocol mentioned in query to determine chunk count.
+    Returns protocol name in lowercase or None.
+    """
+    query_lower = query.lower()
+    # Check against known protocols
+    for protocol in RETRIEVAL_CONFIG.get("protocol_chunks", {}).keys():
+        if protocol in query_lower:
+            return protocol
+    return None
+
+def get_chunk_count_for_query(query: str) -> int:
+    """
+    Determine how many chunks to retrieve based on query content.
+    Uses protocol-specific configuration or default.
+    """
+    protocol = detect_protocol_from_query(query)
+    if protocol:
+        return RETRIEVAL_CONFIG["protocol_chunks"].get(protocol, RETRIEVAL_CONFIG["default_chunks"])
+    return RETRIEVAL_CONFIG["default_chunks"]
 
 def get_config_value(config, key):
     return config.get(key, "")
@@ -157,6 +197,14 @@ def parse_and_validate_array(json_text: str):
 
 # --- MAIN GENERATION LOGIC ---
 
+# Initialize local orchestrator for correlation analysis only
+# External service provides raw chunks, local orchestrator analyzes them
+try:
+    from retrieval import RetrievalOrchestrator
+    _LOCAL_ORCHESTRATOR = RetrievalOrchestrator()
+except Exception:
+    _LOCAL_ORCHESTRATOR = None
+
 def generate(
     query: str,
     model_name: str = "gemini"
@@ -185,20 +233,50 @@ def generate(
     # Path to system instructions
     system_source = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'prompts.json')
 
+    # Determine dynamic chunk count based on query
+    chunk_count = get_chunk_count_for_query(query)
+
     # Fetch context from external retrieval service (endpoint only)
     filtered_context = ""
     if config.get("supports_rag", False) and RETRIEVAL_SERVICE_URL:
         try:
             response = requests.get(
                 RETRIEVAL_SERVICE_URL,
-                params={"query": query, "number": 5},
-                timeout=5
+                params={"query": query, "number": chunk_count},
+                timeout=10
             )
             if response.status_code == 200:
                 data = response.json()
                 # External service returns { "chunks": [...] }
                 chunks = data.get("chunks", [])
-                filtered_context = "\n---\n".join(chunks) if chunks else ""
+                
+                # Perform local correlation analysis on received chunks
+                if chunks and _LOCAL_ORCHESTRATOR:
+                    # Temporarily add chunks to local orchestrator for analysis
+                    _LOCAL_ORCHESTRATOR.add_chunks(chunks)
+                    
+                    # Get correlation-analyzed results
+                    correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
+                    
+                    # Rebuild context with proper ordering (code + theory sections)
+                    code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
+                    theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
+                    
+                    # Build separated context
+                    context_parts = []
+                    if code_chunks:
+                        context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
+                    if theory_chunks:
+                        context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
+                    
+                    filtered_context = "\n\n".join(context_parts) if context_parts else ""
+                    
+                    # Log correlation metrics
+                    print(f"Correlation Score: {correlation_result['correlation_score']}")
+                    print(f"Overall Confidence: {correlation_result['overall_confidence']}")
+                else:
+                    # Fallback: simple join if orchestrator unavailable
+                    filtered_context = "\n---\n".join(chunks) if chunks else ""
         except Exception as e:
             print(f"Warning: Failed to retrieve context from external service: {e}")
             filtered_context = ""
