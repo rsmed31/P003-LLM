@@ -19,7 +19,7 @@ class Settings:
     DEFAULT_SIMILARITY_THRESHOLD: float = float(os.getenv("DEFAULT_SIMILARITY_THRESHOLD", "0.75"))
     
     # API Configuration
-    API_HOST: str = os.getenv("API_HOST", "localhost")
+    API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
     
     @property
