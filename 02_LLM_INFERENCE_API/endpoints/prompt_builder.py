@@ -1,6 +1,6 @@
 import os
 import json
-# NOTE: The rag_logic import is omitted here as the file is not provided.
+from rag_logic.code_aware_filter import filter_and_refine_context
 
 # --- START MODULARITY SETUP ---
 # Dictionary to cache all prompt parts loaded from the JSON file
@@ -50,16 +50,24 @@ def load_system_instructions(system_source_path: str) -> str:
 
 # --- END MODULARITY SETUP ---
 
-def build_context_block(filtered_context_str: str) -> str | None:
+def build_context_block(filtered_context_str: str, use_code_filter: bool = True) -> str | None:
     """
-    Build the context block from retrieval service chunks only.
-    No PostgreSQL integration - all context comes from external retrieval endpoint.
+    Build the context block from retrieval service chunks.
+    Expects pre-separated context with CODE-AWARE and THEORETICAL sections.
+    
+    Args:
+        filtered_context_str: Pre-processed context from correlation analysis
+        use_code_filter: Whether to apply additional filtering (default: True)
+    
+    Returns:
+        Formatted context string (already separated by inference.py)
     """
     if not filtered_context_str or not filtered_context_str.strip():
         return None
     
-    # Single header: Protocol Facts and Errors (from retrieval service)
-    return "## PROTOCOL FACTS AND ERRORS (Retrieved Context):\n" + filtered_context_str.strip()
+    # Context is already properly formatted by inference.py correlation analysis
+    # Just return it as-is, or apply minor cleanup if needed
+    return filtered_context_str.strip()
 
 
 # --- ASSEMBLY FUNCTIONS ---
@@ -74,7 +82,7 @@ def assemble_rag_prompt(
     """
     
     parts = load_prompt_parts(system_file_path)
-    combined_context = build_context_block(filtered_context_str) or "No contextual data available."
+    combined_context = build_context_block(filtered_context_str, use_code_filter=True) or "No contextual data available."
     
     # Assemble the modular template using retrieved parts and the core user data
     modular_template = f"""
@@ -133,7 +141,7 @@ def assemble_rag_prompt_gemini(
 
     # --- Combine contextual data blocks ---
     combined_context = build_context_block(
-         filtered_context_str
+         filtered_context_str, use_code_filter=True
     ) or "No contextual data available."
 
     # --- Construct modular Gemini prompt ---
