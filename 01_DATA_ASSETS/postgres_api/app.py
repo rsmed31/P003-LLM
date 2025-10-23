@@ -226,7 +226,7 @@ async def create_qa(payload: QACreateRequest):
         )
 
 
-@app.get(
+@app.post(
     "/chunks/query",
     response_model=TextChunksQueryResponse,
     responses={
@@ -236,10 +236,7 @@ async def create_qa(payload: QACreateRequest):
     },
     tags=["Text Chunks"]
 )
-async def query_text_chunks(
-    query: str = Query(..., min_length=1, max_length=2000, description="Query text to search for"),
-    limit: int = Query(default=5, ge=1, le=50, description="Maximum number of results to return")
-):
+async def query_text_chunks(payload: TextChunksQueryRequest):
     """
     Query text chunks using semantic similarity search.
     
@@ -252,10 +249,10 @@ async def query_text_chunks(
     Returns a list of matching text chunks with chunk_index, text, and similarity score.
     """
     try:
-        logger.info(f"Querying text chunks with: '{query[:50]}...' (limit: {limit})")
+        logger.info(f"Querying text chunks with: '{payload.query[:50]}...' (limit: {payload.limit})")
         
         # Query database using the new function
-        results = readfromdoc(query, limit)
+        results = readfromdoc(payload.query, payload.limit)
         
         if results:
             logger.info(f"Found {len(results)} matching chunks")
