@@ -9,7 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 # Load environment variables first
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env'))
 
-from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
+from .prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
 
 # --- LOAD CONFIG FROM inference.json ---
 def load_config():
