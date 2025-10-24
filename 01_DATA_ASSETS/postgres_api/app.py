@@ -226,7 +226,7 @@ async def create_qa(payload: QACreateRequest):
         )
 
 
-@app.post(
+@app.get(
     "/chunks/query",
     response_model=TextChunksQueryResponse,
     responses={
