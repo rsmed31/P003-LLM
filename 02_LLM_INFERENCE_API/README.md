@@ -380,9 +380,25 @@ print(response.json())
 ### For Team 1 (RAG Service)
 Expected endpoint format:
 ```
-GET /api/retrieve?query={query}&number={chunk_count}
-Response: { "chunks": ["chunk1", "chunk2", ...] }
+GET /chunks/query?query={query}&limit={chunk_count}
+Response: 
+{
+  "found": true,
+  "results": [
+    {
+      "chunk_index": 42,
+      "text": "OSPF is a routing protocol...",
+      "similarity": 0.89
+    }
+  ],
+  "count": 2,
+  "message": "Found 2 matching chunks"
+}
 ```
+
+**Configuration:**
+Set `RETRIEVAL_SERVICE_URL` in `models/keys.env` to the base URL (e.g., `http://192.168.103.100:8000`).
+The system automatically appends `/chunks/query` endpoint path.
 
 ### For Team 3 (Frontend/Orchestration)
 Call `/v1/getAnswer` with query and preferred model. Response contains structured JSON array ready for execution pipeline.
