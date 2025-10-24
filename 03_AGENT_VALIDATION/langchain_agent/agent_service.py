@@ -139,20 +139,26 @@ def _build_evaluate_payload_from_t2(data: Dict[str, Any]) -> Dict[str, Any]:
 # ========= Team calls =========
 def call_t0_lookup(query: str) -> Dict[str, Any]:
     """
-    T0: Q&A lookup.
+    T0: Q&A lookup via GET.
     Expected response:
       { "hit": true, "answer": "..." }  OR  { "hit": false }
     """
     try:
-        data = _post(f"{T0_BASE_URL}{T0_QA_LOOKUP}", {"query": query})
-        hit = bool(data.get("hit", False))
-        if hit and not isinstance(data.get("answer", None), str):
+        url = f"{T0_BASE_URL}{T0_QA_LOOKUP}"
+        params = {"text": query,"threshold": 0.3}  # use 'q' if Team 0 expects it as query param
+        resp = requests.get(url, params=params, timeout=TIMEOUT)
+        resp.raise_for_status()
+
+        data = resp.json()
+        found = bool(data.get("found", False))
+        if found and not isinstance(data.get("answer", None), str):
             # sanitize weird payloads
-            return {"hit": False}
-        return {"hit": hit, "answer": data.get("answer")}
+            return {"found": False}
+        return {"found": found, "answer": data.get("answer")}
+
     except Exception as e:
         log.warning(f"T0 lookup failed (continuing to T2): {e}")
-        return {"hit": False}
+        return {"found": False}
 
 def call_t2_generate(query: str, model: str = "gemini") -> Dict[str, Any]:
     """
