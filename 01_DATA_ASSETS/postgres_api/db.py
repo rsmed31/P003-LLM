@@ -102,38 +102,6 @@ def query_qa_by_id(qa_id: int) -> Optional[dict]:
         logger.error(f"Error querying QA by ID {qa_id}: {e}")
         raise
 
-
-def insert_qa_record(question: str, answer: str, embedding: Optional[List[float]] = None) -> int:
-    """
-    Insert a new QA record (stub implementation).
-    Returns the ID of the inserted record.
-    """
-    try:
-        with get_db_cursor() as cur:
-            if embedding:
-                cur.execute("""
-                    INSERT INTO qa (question, answer, embedding)
-                    VALUES (%s, %s, %s::vector)
-                    RETURNING id
-                """, (question, answer, embedding))
-            else:
-                cur.execute("""
-                    INSERT INTO qa (question, answer)
-                    VALUES (%s, %s)
-                    RETURNING id
-                """, (question, answer))
-            
-            result = cur.fetchone()
-            return result[0] if result else None
-    except Exception as e:
-        logger.error(f"Error inserting QA record: {e}")
-        raise
-
-
-# ============================================================================
-# Enhanced functions based on user requirements
-# ============================================================================
-
 def qaembedding(question: str, answer: str) -> bool:
     """
     Insert a question-answer pair with its embedding into the qa table.
