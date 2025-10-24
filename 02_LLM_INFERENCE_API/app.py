@@ -28,10 +28,10 @@ app.add_middleware(
 async def root():
     return RedirectResponse(url="/docs")
 
-# Optional: response model for clean OpenAPI schema
+# Update response model to handle array properly
 class GetAnswerResponse(BaseModel):
     model: str
-    response: str
+    response: list  # Changed from str to list to match actual response structure
 
 @app.get("/health")
 async def health():
@@ -62,24 +62,29 @@ async def get_answer(
     It delegates the query to Team 2's existing generate() method and returns only {model, response}.
     """
     try:
-        # Call internal generate() logic
+        # Call internal generate() logic - it returns JSON string
         raw = generate(query=q, model_name=model)
 
-        # Normalize to clean JSON {model, response}
+        # Parse the JSON string from generate()
         try:
             result = json.loads(raw)
             model_name = result.get("model", "unknown_model")
-            response_text = result.get("response", "").strip()
-        except Exception:
-            # In case generate() returns plain text
-            model_name = "unknown_model"
-            response_text = str(raw).strip()
+            response_data = result.get("response", [])
+            
+            # Ensure response is a list (array)
+            if not isinstance(response_data, list):
+                response_data = []
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"Invalid JSON from model: {str(e)}")
 
-        if not response_text:
+        if not response_data:
             raise HTTPException(status_code=502, detail="Empty response from model")
 
-        return {"model": model_name, "response": response_text}
+        # Return properly structured response
+        return {"model": model_name, "response": response_data}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

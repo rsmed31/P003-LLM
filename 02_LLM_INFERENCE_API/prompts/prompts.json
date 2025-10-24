@@ -3,7 +3,7 @@
   
   "CRITICAL_RULE_INSTRUCTION": "**CRITICAL RULE:** Your response MUST start with '[' and end with ']'. Output ONLY the JSON array. NO explanatory text before or after. NO markdown code fences like ```json. NO metadata. NO wrapper objects. Just the pure JSON array that starts with [ and ends with ]. If you cannot produce valid configuration, return an empty array: []",
   
-  "TASK_INSTRUCTION": "# TASK:\nGenerate configuration commands for all specified devices to achieve the stated goal.",
+  "TASK_INSTRUCTION": "# TASK:\nGenerate configuration commands for ALL devices mentioned in the goal. Each device MUST have its own separate object in the array with complete configuration commands.",
   
   "SITUATION_HEADER": "# INPUT DATA:",
   
@@ -13,5 +13,5 @@
 
   "SCHEMA_HEADER": "# OUTPUT FORMAT:",
 
-  "JSON_SCHEMA_BODY": "Return a JSON array where each object represents one device configuration:\n\n[\n  {\n    \"device_name\": \"R1\",\n    \"protocol\": \"OSPF\",\n    \"configuration_mode_commands\": [\n      \"configure terminal\",\n      \"router ospf 1\",\n      \"router-id 1.1.1.1\",\n      \"network 10.0.0.0 0.0.0.255 area 0\",\n      \"exit\"\n    ],\n    \"intent\": [\n      {\n        \"type\": \"adjacency\",\n        \"endpoints\": [\n          {\"role\": \"router\", \"id\": \"R1\"},\n          {\"role\": \"router\", \"id\": \"R2\"}\n        ],\n        \"properties\": {\n          \"description\": \"OSPF neighbor relationship in area 0\"\n        }\n      }\n    ]\n  }\n]\n\nIMPORTANT: Return ONLY this JSON array format. No other text."
+  "JSON_SCHEMA_BODY": "Return a JSON array where EACH DEVICE gets its own object with complete configuration:\n\nExample for \"Configure OSPF area 0 between R1 (router-id 1.1.1.1) and R2 (router-id 2.2.2.2)\":\n[\n  {\n    \"device_name\": \"R1\",\n    \"protocol\": \"OSPF\",\n    \"configuration_mode_commands\": [\n      \"configure terminal\",\n      \"router ospf 1\",\n      \"router-id 1.1.1.1\",\n      \"network 10.0.0.0 0.0.0.255 area 0\",\n      \"exit\"\n    ],\n    \"intent\": [\n      {\n        \"type\": \"adjacency\",\n        \"endpoints\": [\n          {\"role\": \"router\", \"id\": \"R1\"},\n          {\"role\": \"router\", \"id\": \"R2\"}\n        ],\n        \"properties\": {\n          \"description\": \"OSPF neighbor relationship in area 0\"\n        }\n      }\n    ]\n  },\n  {\n    \"device_name\": \"R2\",\n    \"protocol\": \"OSPF\",\n    \"configuration_mode_commands\": [\n      \"configure terminal\",\n      \"router ospf 1\",\n      \"router-id 2.2.2.2\",\n      \"network 10.0.0.0 0.0.0.255 area 0\",\n      \"exit\"\n    ],\n    \"intent\": [\n      {\n        \"type\": \"adjacency\",\n        \"endpoints\": [\n          {\"role\": \"router\", \"id\": \"R2\"},\n          {\"role\": \"router\", \"id\": \"R1\"}\n        ],\n        \"properties\": {\n          \"description\": \"OSPF neighbor relationship in area 0\"\n        }\n      }\n    ]\n  }\n]\n\nIMPORTANT: \n- Generate a SEPARATE object for EACH device mentioned in the goal\n- Return ONLY this JSON array format\n- No explanatory text\n- No markdown code fences"
 }
