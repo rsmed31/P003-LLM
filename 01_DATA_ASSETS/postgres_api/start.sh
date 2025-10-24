@@ -25,7 +25,7 @@ set +e  # allow individual scripts to fail without stopping container
 python3 ./manuals_raw/PDFExtractorV2.py || echo "⚠️ PDFExtractorV2.py failed"
 python3 ./manuals_raw/ChunkCreationV4.py || echo "⚠️ ChunkCreationV4.py failed"
 python3 ./manuals_raw/EmbeddingCreation.py || echo "⚠️ EmbeddingCreation.py failed"
-python3 ./test.py || echo "⚠️ test.py failed"
+#python3 ./test.py || echo "⚠️ test.py failed"
 
 set -e
 
