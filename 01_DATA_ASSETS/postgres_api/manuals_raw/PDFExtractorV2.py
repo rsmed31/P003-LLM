@@ -7,11 +7,11 @@ from typing import List, Tuple, Dict
 import argparse
 import logging
 
-DEFAULT_OSPF_DIR = Path("./docs/ospf")
-DEFAULT_VLAN_DIR = Path("./docs/vlan")
-DOCLIST_PATH = Path("./docs/doclist.txt")
-OUTPUT_OSPF = Path("./docs/ospf_manual.txt")
-OUTPUT_VLAN = Path("./docs/vlan_manual.txt")
+DEFAULT_OSPF_DIR = Path("./manuals_raw/docs/ospf")
+DEFAULT_VLAN_DIR = Path("./manuals_raw/docs/vlan")
+DOCLIST_PATH = Path("./manuals_raw/docs/doclist.txt")
+OUTPUT_OSPF = Path("./manuals_raw/docs/ospf_manual.txt")
+OUTPUT_VLAN = Path("./manuals_raw/docs/vlan_manual.txt")
 HEADER_FOOTER_THRESHOLD = 0.5
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

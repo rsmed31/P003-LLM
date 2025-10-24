@@ -79,8 +79,8 @@ def process_directory_json(input_dir,
 
 # Main
 if __name__ == "__main__":
-    input_dir = "./docs/"
-    output_file = "./docs/raw_chunks.json"
+    input_dir = "./manuals_raw/docs/"
+    output_file = "./manuals_raw/docs/raw_chunks.json"
     chunk_size = 1000
     overlap = 100
     process_directory_json(input_dir, output_file, chunk_size, overlap,50)

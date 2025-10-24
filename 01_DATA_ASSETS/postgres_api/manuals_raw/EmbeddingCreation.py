@@ -15,7 +15,7 @@ cur = conn.cursor()
 # Embedding-Model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-with open("./docs/raw_chunks.json", "r", encoding="utf-8") as f:
+with open("./manuals_raw/docs/raw_chunks.json", "r", encoding="utf-8") as f:
     chunks = json.load(f)
 
 # Create and insert Embeddings per Chunk

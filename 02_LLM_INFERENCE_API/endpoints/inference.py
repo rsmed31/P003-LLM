@@ -5,11 +5,17 @@ import requests
 from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# Add current directory so absolute import 'prompt_builder' works when run directly
+sys.path.append(os.path.dirname(__file__))
 
 # Load environment variables first
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'models', 'keys.env'))
 
-from .prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
+# Use package-relative import when available, fallback to absolute for direct runs
+try:
+    from .prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
+except Exception:
+    from prompt_builder import assemble_rag_prompt, assemble_rag_prompt_gemini, load_system_instructions
 
 # --- LOAD CONFIG FROM inference.json ---
 def load_config():
@@ -141,39 +147,49 @@ def callLlama(api_link, prompt, api_key=None, model=None, stream=False):
 
 def clean_model_output(text: str) -> str:
     """
-    Remove common wrappers the model might add: code fences, leading 'json' markers,
-    and leading/trailing whitespace. Preserve the inner JSON exactly.
+    Aggressively remove common wrappers the model adds.
+    Handles cases where model output might be fragmented or have trailing text.
     """
     if not text:
         return text
 
     t = text.strip()
 
-    # Remove ```json ... ``` or ``` ... ```
-    if t.startswith("```") and t.endswith("```"):
-        # strip the outer fences
-        # also drop leading "```json" markers if present
-        lines = t.splitlines()
-        # remove first and last lines (the fences)
-        if len(lines) >= 2:
-            inner = "\n".join(lines[1:-1]).strip()
+    # First, try to extract content between first '[' and last ']'
+    first_bracket = t.find('[')
+    last_bracket = t.rfind(']')
+    
+    if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
+        # Extract the JSON array portion
+        json_portion = t[first_bracket:last_bracket + 1]
+        
+        # Remove any markdown code fences that might be inside
+        if '```' in json_portion:
+            # Remove all ``` markers
+            json_portion = json_portion.replace('```json', '').replace('```', '')
+        
+        t = json_portion.strip()
+    
+    # Remove leading 'json' keyword if present
+    if t.lower().startswith("json"):
+        t = t[4:].strip()
+    
+    # Final validation: ensure it starts with [ and ends with ]
+    if not t.startswith('['):
+        idx = t.find('[')
+        if idx != -1:
+            t = t[idx:]
         else:
-            inner = ""
-        t = inner
-
-    # If startswith 'json\n' or 'json ' remove it
-    if t.lower().startswith("json\n") or t.lower().startswith("json "):
-        t = t.split("\n", 1)[1].strip() if "\n" in t else t[4:].strip()
-
-    # If model returned a quoted string with JSON inside quotation marks,
-    # try to unquote (handles cases like "\"[ ... ]\"" )
-    if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
-        try:
-            import ast
-            t = ast.literal_eval(t)
-        except Exception:
-            # leave as-is if eval fails
-            pass
+            # No opening bracket found - this is an error
+            return t
+    
+    if not t.endswith(']'):
+        idx = t.rfind(']')
+        if idx != -1:
+            t = t[:idx + 1]
+        else:
+            # No closing bracket found - this is an error
+            return t
 
     return t
 
@@ -240,45 +256,60 @@ def generate(
     filtered_context = ""
     if config.get("supports_rag", False) and RETRIEVAL_SERVICE_URL:
         try:
+            # Updated endpoint: /chunks/query with query and limit parameters
             response = requests.get(
-                RETRIEVAL_SERVICE_URL,
-                params={"query": query, "number": chunk_count},
+                f"{RETRIEVAL_SERVICE_URL}/chunks/query",
+                params={"query": query, "limit": chunk_count},
                 timeout=10
             )
             if response.status_code == 200:
                 data = response.json()
-                # External service returns { "chunks": [...] }
-                chunks = data.get("chunks", [])
                 
-                # Perform local correlation analysis on received chunks
-                if chunks and _LOCAL_ORCHESTRATOR:
-                    # Temporarily add chunks to local orchestrator for analysis
-                    _LOCAL_ORCHESTRATOR.add_chunks(chunks)
+                # Parse new response format
+                if data.get("found", False):
+                    results = data.get("results", [])
                     
-                    # Get correlation-analyzed results
-                    correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
+                    # Extract text chunks from results
+                    chunks = [item["text"] for item in results if "text" in item]
                     
-                    # Rebuild context with proper ordering (code + theory sections)
-                    code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
-                    theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
+                    # Perform local correlation analysis on received chunks
+                    if chunks and _LOCAL_ORCHESTRATOR:
+                        # Temporarily add chunks to local orchestrator for analysis
+                        _LOCAL_ORCHESTRATOR.add_chunks(chunks)
+                        
+                        # Get correlation-analyzed results
+                        correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
+                        
+                        # Rebuild context with proper ordering (code + theory sections)
+                        code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
+                        theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
+                        
+                        # Build separated context
+                        context_parts = []
+                        if code_chunks:
+                            context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
+                        if theory_chunks:
+                            context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
+                        
+                        filtered_context = "\n\n".join(context_parts) if context_parts else ""
+                        
+                        # Log correlation metrics
+                        print(f"Correlation Score: {correlation_result['correlation_score']}")
+                        print(f"Overall Confidence: {correlation_result['overall_confidence']}")
+                    else:
+                        # Fallback: simple join if orchestrator unavailable
+                        filtered_context = "\n---\n".join(chunks) if chunks else ""
                     
-                    # Build separated context
-                    context_parts = []
-                    if code_chunks:
-                        context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
-                    if theory_chunks:
-                        context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
-                    
-                    filtered_context = "\n\n".join(context_parts) if context_parts else ""
-                    
-                    # Log correlation metrics
-                    print(f"Correlation Score: {correlation_result['correlation_score']}")
-                    print(f"Overall Confidence: {correlation_result['overall_confidence']}")
+                    # Log retrieval stats
+                    print(f"Retrieved {len(chunks)} chunks from service (limit: {chunk_count})")
                 else:
-                    # Fallback: simple join if orchestrator unavailable
-                    filtered_context = "\n---\n".join(chunks) if chunks else ""
-        except Exception as e:
+                    print(f"Warning: No matching chunks found for query")
+                    filtered_context = ""
+        except requests.exceptions.RequestException as e:
             print(f"Warning: Failed to retrieve context from external service: {e}")
+            filtered_context = ""
+        except Exception as e:
+            print(f"Warning: Error processing retrieval response: {e}")
             filtered_context = ""
 
     # Determine whether to use RAG
@@ -317,6 +348,7 @@ def generate(
             )
         else:
             prompt_to_send = query
+        print(prompt_to_send)
         unCleanedResponse = callLlama(api_link, prompt_to_send, api_key=api_key, model=config.get('model'))
         # print(f"The model uncleaned response: {unCleanedResponse}")
         cleanedResponse = clean_model_output(unCleanedResponse)
@@ -332,17 +364,6 @@ def generate(
 # --- EXAMPLE USAGE ---
 
 if __name__ == "__main__":
-    # Example 1: Simple query without RAG
-    print("--- Test 1: Simple query ---")
-    try:
-        response = generate(
-            query="What is BGP?",
-            model_name="llama"
-        )
-        print(response)
-    except Exception as e:
-        print(f"Error: {e}")
-
     print("\n--- Test 2: Configuration query with RAG ---")
     try:
         response = generate(

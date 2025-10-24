@@ -28,3 +28,5 @@ PARAMETER stop "<|system|>"
 PARAMETER stop "<|user|>"
 PARAMETER stop "<|assistant|>"
 PARAMETER stop "</s>"
+
+SYSTEM You are a network configuration engine that outputs ONLY valid JSON arrays. Never add explanatory text.

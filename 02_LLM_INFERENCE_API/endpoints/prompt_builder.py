@@ -84,29 +84,27 @@ def assemble_rag_prompt(
     parts = load_prompt_parts(system_file_path)
     combined_context = build_context_block(filtered_context_str, use_code_filter=True) or "No contextual data available."
     
-    # Assemble the modular template using retrieved parts and the core user data
-    modular_template = f"""
-{parts['CRITICAL_RULE_INSTRUCTION']}
+    # Simplified, more direct prompt structure
+    user_content = f"""{parts['CRITICAL_RULE_INSTRUCTION']}
 
 {parts['TASK_INSTRUCTION']}
 
 {parts['SITUATION_HEADER']}
-{parts['CONFIG_GOAL_HEADER']}
-{user_query_str}
+{parts['CONFIG_GOAL_HEADER']} {user_query_str}
 
-{parts['CONTEXT_BASE_HEADER']}
-{combined_context}
+{parts['CONTEXT_BASE_HEADER']} {combined_context}
 
 {parts['SCHEMA_HEADER']}
 {parts['JSON_SCHEMA_BODY']}
-"""
 
-    # Assemble final prompt following chat template structure (e.g., Llama/Zephyr)
+Remember: Output ONLY the JSON array starting with [ and ending with ]. No other text."""
+
+    # Assemble final prompt - let model generate the opening bracket naturally
     final_prompt = f"""<|system|>
 {parts['SYSTEM_PROMPT']}
 </s>
 <|user|>
-{modular_template.strip()}
+{user_content.strip()}
 </s>
 <|assistant|>
 """
@@ -121,47 +119,28 @@ def assemble_rag_prompt_gemini(
 ) -> str:
     """
     Assemble the full Gemini-style RAG prompt using modular JSON components.
-
-    Parameters
-    ----------
-    system_file_path : str
-        Path to the system JSON file (e.g., prompts.json).
-    filtered_context_str : str
-        Retrieved context (e.g., from FAISS or embeddings search).
-    user_query_str : str
-        User goal or instruction (e.g., network configuration task).
-
-    Returns
-    -------
-    str
-        The full text prompt ready for Gemini API input.
     """
-    # --- Load modular prompt parts ---
     parts = load_prompt_parts(system_file_path)
-
-    # --- Combine contextual data blocks ---
     combined_context = build_context_block(
          filtered_context_str, use_code_filter=True
     ) or "No contextual data available."
 
-    # --- Construct modular Gemini prompt ---
-    modular_template = f"""
-{parts['SYSTEM_PROMPT']}
+    # Simplified Gemini prompt
+    modular_template = f"""{parts['SYSTEM_PROMPT']}
 
 {parts['CRITICAL_RULE_INSTRUCTION']}
 
 {parts['TASK_INSTRUCTION']}
 
 {parts['SITUATION_HEADER']}
-{parts['CONFIG_GOAL_HEADER']}
-{user_query_str.strip()}
+{parts['CONFIG_GOAL_HEADER']} {user_query_str.strip()}
 
-{parts['CONTEXT_BASE_HEADER']}
-{combined_context.strip()}
+{parts['CONTEXT_BASE_HEADER']} {combined_context.strip()}
 
 {parts['SCHEMA_HEADER']}
 {parts['JSON_SCHEMA_BODY']}
-"""
+
+Output the JSON array now (start with [):"""
 
     return modular_template.strip()
 
