@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os, json, logging
 from typing import Dict, Any, Optional
 import requests

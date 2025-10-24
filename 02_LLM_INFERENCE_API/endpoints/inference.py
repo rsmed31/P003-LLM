@@ -256,45 +256,60 @@ def generate(
     filtered_context = ""
     if config.get("supports_rag", False) and RETRIEVAL_SERVICE_URL:
         try:
+            # Updated endpoint: /chunks/query with query and limit parameters
             response = requests.get(
-                RETRIEVAL_SERVICE_URL,
-                params={"query": query, "number": chunk_count},
+                f"{RETRIEVAL_SERVICE_URL}/chunks/query",
+                params={"query": query, "limit": chunk_count},
                 timeout=10
             )
             if response.status_code == 200:
                 data = response.json()
-                # External service returns { "chunks": [...] }
-                chunks = data.get("chunks", [])
                 
-                # Perform local correlation analysis on received chunks
-                if chunks and _LOCAL_ORCHESTRATOR:
-                    # Temporarily add chunks to local orchestrator for analysis
-                    _LOCAL_ORCHESTRATOR.add_chunks(chunks)
+                # Parse new response format
+                if data.get("found", False):
+                    results = data.get("results", [])
                     
-                    # Get correlation-analyzed results
-                    correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
+                    # Extract text chunks from results
+                    chunks = [item["text"] for item in results if "text" in item]
                     
-                    # Rebuild context with proper ordering (code + theory sections)
-                    code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
-                    theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
+                    # Perform local correlation analysis on received chunks
+                    if chunks and _LOCAL_ORCHESTRATOR:
+                        # Temporarily add chunks to local orchestrator for analysis
+                        _LOCAL_ORCHESTRATOR.add_chunks(chunks)
+                        
+                        # Get correlation-analyzed results
+                        correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
+                        
+                        # Rebuild context with proper ordering (code + theory sections)
+                        code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
+                        theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
+                        
+                        # Build separated context
+                        context_parts = []
+                        if code_chunks:
+                            context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
+                        if theory_chunks:
+                            context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
+                        
+                        filtered_context = "\n\n".join(context_parts) if context_parts else ""
+                        
+                        # Log correlation metrics
+                        print(f"Correlation Score: {correlation_result['correlation_score']}")
+                        print(f"Overall Confidence: {correlation_result['overall_confidence']}")
+                    else:
+                        # Fallback: simple join if orchestrator unavailable
+                        filtered_context = "\n---\n".join(chunks) if chunks else ""
                     
-                    # Build separated context
-                    context_parts = []
-                    if code_chunks:
-                        context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
-                    if theory_chunks:
-                        context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
-                    
-                    filtered_context = "\n\n".join(context_parts) if context_parts else ""
-                    
-                    # Log correlation metrics
-                    print(f"Correlation Score: {correlation_result['correlation_score']}")
-                    print(f"Overall Confidence: {correlation_result['overall_confidence']}")
+                    # Log retrieval stats
+                    print(f"Retrieved {len(chunks)} chunks from service (limit: {chunk_count})")
                 else:
-                    # Fallback: simple join if orchestrator unavailable
-                    filtered_context = "\n---\n".join(chunks) if chunks else ""
-        except Exception as e:
+                    print(f"Warning: No matching chunks found for query")
+                    filtered_context = ""
+        except requests.exceptions.RequestException as e:
             print(f"Warning: Failed to retrieve context from external service: {e}")
+            filtered_context = ""
+        except Exception as e:
+            print(f"Warning: Error processing retrieval response: {e}")
             filtered_context = ""
 
     # Determine whether to use RAG
