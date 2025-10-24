@@ -6,7 +6,6 @@ RUN pip install --no-cache-dir --break-system-packages torch torchvision torchau
 RUN pip install --no-cache-dir --break-system-packages sentence-transformers
 
 
-# Install Python packages; allow system installs since we're in a container
 RUN pip install --no-cache-dir --break-system-packages \
     fastapi>=0.104.0 \
     uvicorn>=0.24.0 \
@@ -19,15 +18,15 @@ RUN pip install --no-cache-dir --break-system-packages \
     requests>=2.31.0 PyMuPDF frontend
 
 
-
 WORKDIR /db
 COPY . /db
-COPY init.sql /docker-entrypoint-initdb.d/init.sql
+
+COPY 01-init.sql /docker-entrypoint-initdb.d/01-init.sql
+COPY 02-init.sh /docker-entrypoint-initdb.d/02-init.sh
 
 EXPOSE 5432
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-# COPY start.sh /start.sh
 RUN chmod +x ./start.sh
 CMD ["./start.sh"]
