@@ -1,25 +1,5 @@
 {
-    "default_chunks": 75,
+    "default_chunks": 50,
     "protocol_chunks": {
-        "ospf": 100,
-        "eigrp": 90,
-        "bgp": 120,
-        "vlan": 50,
-        "stp": 60,
-        "spanning-tree": 60,
-        "hsrp": 70,
-        "vrrp": 70,
-        "vrf": 80,
-        "mpls": 110,
-        "qos": 95,
-        "acl": 65,
-        "nat": 70,
-        "vpn": 100,
-        "ipsec": 95,
-        "gre": 60,
-        "etherchannel": 55,
-        "port-channel": 55,
-        "interface": 40,
-        "routing": 85
     }
 }

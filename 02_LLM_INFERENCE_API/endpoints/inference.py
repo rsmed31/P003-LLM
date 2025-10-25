@@ -65,7 +65,7 @@ def load_retrieval_config():
     except FileNotFoundError:
         # Fallback defaults
         return {
-            "default_chunks": 75,
+            "default_chunks": 50,
             "protocol_chunks": {}
         }
 
@@ -83,15 +83,22 @@ def detect_protocol_from_query(query: str) -> str:
             return protocol
     return None
 
-def get_chunk_count_for_query(query: str) -> int:
+def get_chunk_count_for_query(query: str, model_config: dict = None) -> int:
     """
-    Determine how many chunks to retrieve based on query content.
-    Uses protocol-specific configuration or default.
+    Determine how many chunks to retrieve based on query content and model limits.
+    Uses protocol-specific configuration or default, capped by model max_chunks.
     """
     protocol = detect_protocol_from_query(query)
     if protocol:
-        return RETRIEVAL_CONFIG["protocol_chunks"].get(protocol, RETRIEVAL_CONFIG["default_chunks"])
-    return RETRIEVAL_CONFIG["default_chunks"]
+        base_count = RETRIEVAL_CONFIG["protocol_chunks"].get(protocol, RETRIEVAL_CONFIG["default_chunks"])
+    else:
+        base_count = RETRIEVAL_CONFIG["default_chunks"]
+    
+    # Apply model-specific max_chunks limit
+    if model_config and 'max_chunks' in model_config:
+        return min(base_count, model_config['max_chunks'])
+    
+    return base_count
 
 def get_config_value(config, key):
     return config.get(key, "")
@@ -160,38 +167,24 @@ def clean_model_output(text: str) -> str:
     last_bracket = t.rfind(']')
     
     if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
-        # Extract the JSON array portion
+        # Extract ONLY the JSON array portion - nothing before or after
         json_portion = t[first_bracket:last_bracket + 1]
         
         # Remove any markdown code fences that might be inside
         if '```' in json_portion:
-            # Remove all ``` markers
             json_portion = json_portion.replace('```json', '').replace('```', '')
         
-        t = json_portion.strip()
+        return json_portion.strip()
     
-    # Remove leading 'json' keyword if present
-    if t.lower().startswith("json"):
-        t = t[4:].strip()
+    # Fallback: try to find brackets and extract
+    if '[' in t and ']' in t:
+        start = t.find('[')
+        end = t.rfind(']')
+        if start < end:
+            return t[start:end + 1].strip()
     
-    # Final validation: ensure it starts with [ and ends with ]
-    if not t.startswith('['):
-        idx = t.find('[')
-        if idx != -1:
-            t = t[idx:]
-        else:
-            # No opening bracket found - this is an error
-            return t
-    
-    if not t.endswith(']'):
-        idx = t.rfind(']')
-        if idx != -1:
-            t = t[:idx + 1]
-        else:
-            # No closing bracket found - this is an error
-            return t
-
-    return t
+    # Last resort: return as-is (will fail validation)
+    return t.strip()
 
 def parse_and_validate_array(json_text: str):
     try:
@@ -249,8 +242,9 @@ def generate(
     # Path to system instructions
     system_source = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'prompts.json')
 
-    # Determine dynamic chunk count based on query
-    chunk_count = get_chunk_count_for_query(query)
+    # Determine dynamic chunk count based on query and model limits
+    chunk_count = get_chunk_count_for_query(query, config)
+    print(f"[INFO] Requesting {chunk_count} chunks for model '{model_name}'")
 
     # Fetch context from external retrieval service (endpoint only)
     filtered_context = ""
@@ -260,7 +254,7 @@ def generate(
             response = requests.get(
                 f"{RETRIEVAL_SERVICE_URL}/chunks/query",
                 params={"query": query, "limit": chunk_count},
-                timeout=10
+                timeout=1000
             )
             if response.status_code == 200:
                 data = response.json()
@@ -269,47 +263,53 @@ def generate(
                 if data.get("found", False):
                     results = data.get("results", [])
                     
-                    # Extract text chunks from results
-                    chunks = [item["text"] for item in results if "text" in item]
+                    # Extract text chunks from results - LIMIT HERE TOO
+                    chunks = [item["text"] for item in results if "text" in item][:chunk_count]
                     
-                    # Perform local correlation analysis on received chunks
-                    if chunks and _LOCAL_ORCHESTRATOR:
-                        # Temporarily add chunks to local orchestrator for analysis
-                        _LOCAL_ORCHESTRATOR.add_chunks(chunks)
-                        
-                        # Get correlation-analyzed results
-                        correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
-                        
-                        # Rebuild context with proper ordering (code + theory sections)
-                        code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
-                        theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
-                        
-                        # Build separated context
-                        context_parts = []
-                        if code_chunks:
-                            context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
-                        if theory_chunks:
-                            context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
-                        
-                        filtered_context = "\n\n".join(context_parts) if context_parts else ""
-                        
-                        # Log correlation metrics
-                        print(f"Correlation Score: {correlation_result['correlation_score']}")
-                        print(f"Overall Confidence: {correlation_result['overall_confidence']}")
-                    else:
-                        # Fallback: simple join if orchestrator unavailable
+                    print(f"[INFO] Retrieved {len(chunks)} chunks from service (limit: {chunk_count})")
+                    
+                    # For Llama, skip orchestrator and use simple context
+                    if model_name == "llama":
+                        # Simple join for Llama - no correlation analysis
                         filtered_context = "\n---\n".join(chunks) if chunks else ""
-                    
-                    # Log retrieval stats
-                    print(f"Retrieved {len(chunks)} chunks from service (limit: {chunk_count})")
+                    else:
+                        # Perform local correlation analysis for Gemini only
+                        if chunks and _LOCAL_ORCHESTRATOR:
+                            # Temporarily add chunks to local orchestrator for analysis
+                            _LOCAL_ORCHESTRATOR.add_chunks(chunks)
+                            
+                            # Get correlation-analyzed results
+                            correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
+                            
+                            # Rebuild context with proper ordering (code + theory sections)
+                            code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
+                            theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
+                            
+
+                            # Build separated context
+                            context_parts = []
+                            if code_chunks:
+                                context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
+                            if theory_chunks:
+                                context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
+                            
+
+                            filtered_context = "\n\n".join(context_parts) if context_parts else ""
+                            
+                            # Log correlation metrics
+                            print(f"[INFO] Correlation Score: {correlation_result['correlation_score']}")
+                            print(f"[INFO] Overall Confidence: {correlation_result['overall_confidence']}")
+                        else:
+                            # Fallback: simple join if orchestrator unavailable
+                            filtered_context = "\n---\n".join(chunks) if chunks else ""
                 else:
-                    print(f"Warning: No matching chunks found for query")
+                    print(f"[WARN] No matching chunks found for query")
                     filtered_context = ""
         except requests.exceptions.RequestException as e:
-            print(f"Warning: Failed to retrieve context from external service: {e}")
+            print(f"[WARN] Failed to retrieve context from external service: {e}")
             filtered_context = ""
         except Exception as e:
-            print(f"Warning: Error processing retrieval response: {e}")
+            print(f"[WARN] Error processing retrieval response: {e}")
             filtered_context = ""
 
     # Determine whether to use RAG
@@ -328,9 +328,8 @@ def generate(
             )
         else:
             assembled_prompt = query
-        # print(assembled_prompt)
+        
         unCleanedResponse = callGemini(model, assembled_prompt)
-        # print(f"The model uncleaned response: {unCleanedResponse}")
         cleanedResponse = clean_model_output(unCleanedResponse)
         parsedObject = parse_and_validate_array(cleanedResponse)
         clean = {
@@ -349,11 +348,11 @@ def generate(
         else:
             prompt_to_send = query
         print(prompt_to_send)
+        
+        print(f"[DEBUG] Prompt length: {len(prompt_to_send)} chars")
         unCleanedResponse = callLlama(api_link, prompt_to_send, api_key=api_key, model=config.get('model'))
-        # print(f"The model uncleaned response: {unCleanedResponse}")
         cleanedResponse = clean_model_output(unCleanedResponse)
         parsedObject = parse_and_validate_array(cleanedResponse)
-        # Clean output
         clean = {
             "model": model_name,
             "response": parsedObject
