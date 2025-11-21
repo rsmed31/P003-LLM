@@ -41,18 +41,335 @@ The Batfish validation module is implemented as a **Flask API** that interacts w
 
 ---
 
-## 🧾 API Example
+## 🚀 Quick Start
 
-### **Endpoint**
-`POST /evaluate`
+### 1. Start with Docker Compose (Recommended)
+```bash
+cd c:\Users\enmoh\Desktop\P003-LLM\03_AGENT_VALIDATION\batfish
+docker compose up --build -d
+```
 
-### **Example Request**
+This starts:
+- **Batfish container** on ports 8888, 9997, 9996
+- **Validator API** on port 5000
+
+### 2. Check Status
+```bash
+docker compose ps
+docker compose logs -f validator
+```
+
+### 3. Test the Service
+```bash
+curl http://localhost:5000/health
+```
+
+---
+
+## 📁 Project Structure
+
+```
+03_AGENT_VALIDATION/batfish/
+├── docker-compose.yml      # Orchestrates Batfish + Validator
+├── Dockerfile              # Validator service image
+├── validator.py            # Flask API for validation
+├── requirements.txt        # Python dependencies
+├── configs/                # Base network configurations
+│   ├── R1.cfg
+│   ├── R2.cfg
+│   └── R3.cfg
+└── README.md
+```
+
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Configure in `docker-compose.yml` or via environment:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BATFISH_HOST` | `batfish` | Hostname of Batfish container |
+| `BF_NETWORK_NAME` | `network-test` | Batfish network name |
+| `BF_SNAPSHOT_BASE` | `/app/configs` | Base config directory |
+| `PORT` | `5000` | Validator API port |
+| `REACH_SRC` | `h1` | Default source for reachability |
+| `REACH_DST` | `h2` | Default destination for reachability |
+
+### Custom Ports
+
+Edit `docker-compose.yml`:
+```yaml
+services:
+  validator:
+    ports:
+      - "9000:5000"  # Change external port
+```
+
+---
+
+## 📡 API Reference
+
+### `POST /evaluate`
+
+Validate network configuration changes.
+
+**Request Body:**
 ```json
 {
   "changes": {
-    "R1": ["router ospf 100", "network 10.0.0.0 0.0.0.255 area 0"]
+    "R1": [
+      "interface GigabitEthernet0/0",
+      "ip address 10.0.1.1 255.255.255.0"
+    ],
+    "R2": [
+      "router ospf 1",
+      "network 10.0.0.0 0.0.0.255 area 0"
+    ]
   },
   "intent": {
-    "reach": [{"src": "h1", "dst": "h2"}]
+    "reach": [
+      {"src": "h1", "dst": "h2"}
+    ]
   }
 }
+```
+
+**Response:**
+```json
+{
+  "result": "OK",
+  "snapshot": "snapshot-verify-abc123",
+  "summary": {
+    "CP": {
+      "status": "PASS",
+      "rows": 24
+    },
+    "TP": {
+      "status": "PASS",
+      "edges": 8
+    },
+    "REACH": [
+      {
+        "src": "h1",
+        "dst": "h2",
+        "status": "PASS"
+      }
+    ]
+  }
+}
+```
+
+### `GET /health`
+
+Health check endpoint.
+
+**Response:**
+```json
+{
+  "status": "up"
+}
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Batfish container not starting
+```bash
+# Check Batfish logs
+docker compose logs batfish
+
+# Restart Batfish
+docker compose restart batfish
+```
+
+### Validator can't connect to Batfish
+```bash
+# Verify network connectivity
+docker compose exec validator ping batfish
+
+# Check Batfish health
+docker compose exec validator curl http://batfish:9996/
+```
+
+### Config files not found
+```bash
+# Ensure configs directory exists and has files
+ls -la configs/
+
+# Check volume mount
+docker compose exec validator ls -la /app/configs/
+```
+
+### Permission issues with volumes
+```bash
+# Reset volumes
+docker compose down -v
+docker compose up --build
+```
+
+---
+
+## 🧪 Testing
+
+### Test with Sample Data
+```bash
+curl -X POST http://localhost:5000/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "changes": {
+      "R1": ["interface lo0", "ip address 1.1.1.1 255.255.255.255"]
+    },
+    "intent": {
+      "reach": [{"src": "R1", "dst": "R2"}]
+    }
+  }' | python -m json.tool
+```
+
+### Integration Test via Agent
+```bash
+cd ../../langchain_agent
+python agent_service.py --query "Configure OSPF on 3 routers"
+```
+
+---
+
+## 🔄 Updating Configurations
+
+### Add New Base Config
+```bash
+# Create new device config
+echo "hostname R4" > configs/R4.cfg
+
+# Restart validator to pick up changes
+docker compose restart validator
+```
+
+### Reset to Clean State
+```bash
+# Stop and remove volumes
+docker compose down -v
+
+# Rebuild and start
+docker compose up --build -d
+```
+
+---
+
+## 🐳 Docker Commands Reference
+
+### Basic Operations
+```bash
+# Start services
+docker compose up -d
+
+# Stop services
+docker compose stop
+
+# Remove containers (keeps volumes)
+docker compose down
+
+# Remove everything including volumes
+docker compose down -v
+
+# View logs
+docker compose logs -f [service_name]
+
+# Restart a service
+docker compose restart [service_name]
+```
+
+### Development
+```bash
+# Rebuild after code changes
+docker compose up --build
+
+# Execute commands in container
+docker compose exec validator python -c "print('test')"
+
+# Access container shell
+docker compose exec validator /bin/bash
+```
+
+### Debugging
+```bash
+# Check container status
+docker compose ps
+
+# Inspect volumes
+docker volume ls
+docker volume inspect batfish_batfish-data
+
+# View resource usage
+docker stats
+```
+
+---
+
+## 🔗 Integration with Makefile
+
+The master Makefile includes commands for this service:
+
+```bash
+# From project root (P003-LLM/)
+make run-t3           # Start validator with Docker Compose
+make logs-t3          # View validator logs
+make stop             # Stop all services including validator
+```
+
+---
+
+## 📦 Batfish Data Persistence
+
+Batfish data is stored in a named volume `batfish-data`:
+
+```bash
+# Backup Batfish data
+docker run --rm -v batfish_batfish-data:/data -v $(pwd):/backup \
+  alpine tar czf /backup/batfish-backup.tar.gz -C /data .
+
+# Restore Batfish data
+docker run --rm -v batfish_batfish-data:/data -v $(pwd):/backup \
+  alpine tar xzf /backup/batfish-backup.tar.gz -C /data
+```
+
+---
+
+## 🚨 Production Considerations
+
+1. **Resource Limits**: Add to `docker-compose.yml`:
+   ```yaml
+   services:
+     batfish:
+       deploy:
+         resources:
+           limits:
+             cpus: '2.0'
+             memory: 4G
+   ```
+
+2. **Security**: Don't expose Batfish ports publicly (remove port mappings for 9996, 9997)
+
+3. **Monitoring**: Add health checks and alerts
+
+4. **Logging**: Configure log rotation:
+   ```yaml
+   services:
+     validator:
+       logging:
+         driver: "json-file"
+         options:
+           max-size: "10m"
+           max-file: "3"
+   ```
+
+---
+
+## 📌 Version
+
+**Batfish Image:** `batfish/allinone:latest`  
+**Validator Version:** 1.0.0  
+**Last Updated:** 2025

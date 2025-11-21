@@ -6,9 +6,12 @@ Network configuration generation service using LLM models (Gemini & Llama/Ollama
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### 1. Create Virtual Environment & Install Dependencies
 ```bash
-pip install fastapi uvicorn google-generativeai requests python-dotenv pydantic
+cd 02_LLM_INFERENCE_API
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment Variables
@@ -21,7 +24,7 @@ RETRIEVAL_SERVICE_URL=http://your-retrieval-service:5000/api/retrieve
 
 ### 3. Run the Server
 ```bash
-cd c:\Users\enmoh\Desktop\P003-LLM\02_LLM_INFERENCE_API
+source .venv/bin/activate  # If not already activated
 python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -32,24 +35,75 @@ python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
+## 📋 Using the Makefile (Recommended)
+
+From the project root:
+
+```bash
+# Install with venv
+make install-t2
+
+# Run the service
+make run-t2
+
+# Or with custom port
+make T2_PORT=9001 run-t2
+```
+
+---
+
+## 🔧 Manual Virtual Environment Setup
+
+### Create Virtual Environment
+```bash
+python3 -m venv .venv
+```
+
+### Activate Virtual Environment
+
+**Linux/macOS:**
+```bash
+source .venv/bin/activate
+```
+
+**Windows:**
+```cmd
+.venv\Scripts\activate
+```
+
+### Install Dependencies
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Deactivate When Done
+```bash
+deactivate
+```
+
+---
+
 ## 📁 Project Structure
 
 ```
 02_LLM_INFERENCE_API/
-├── app.py                          # FastAPI server entry point
+├── .venv/                      # Virtual environment (not in git)
+├── app.py                      # FastAPI server entry point
+├── requirements.txt            # Python dependencies
 ├── endpoints/
 │   ├── __init__.py
-│   ├── inference.py                # Core inference logic (MAIN ENTRY)
-│   └── prompt_builder.py           # Prompt assembly utilities
+│   ├── inference.py            # Core inference logic (MAIN ENTRY)
+│   └── prompt_builder.py       # Prompt assembly utilities
 ├── models/
-│   ├── inference.json              # Model configuration
-│   ├── keys.env                    # API keys & endpoints
-│   ├── retrieval_config.json       # Protocol-specific chunk counts
-│   └── zephyr_configurator         # Ollama Modelfile
+│   ├── inference.json          # Model configuration
+│   ├── keys.env                # API keys & endpoints
+│   ├── retrieval_config.json   # Protocol-specific chunk counts
+│   └── zephyr_configurator     # Ollama Modelfile
 ├── prompts/
-│   └── prompts.json                # Modular prompt templates
+│   └── prompts.json            # Modular prompt templates
 ├── rag_logic/
-│   └── code_aware_filter.py        # CLI-aware context filtering
+│   └── code_aware_filter.py    # CLI-aware context filtering
 └── retrieval/
     ├── __init__.py
     └── retrieval_orchestrator.py   # TF-IDF retrieval with correlation
@@ -306,20 +360,16 @@ Already configured for open access. If still blocked, check browser console and 
 
 ## 📊 Testing
 
-### Test via Swagger UI
-1. Navigate to http://localhost:8000/docs
-2. Expand `/v1/getAnswer`
-3. Click "Try it out"
-4. Enter query and select model
-5. Execute and review response
+### Test via Command Line
+```bash
+# Activate venv first
+source .venv/bin/activate
 
-### Test via Simple UI
-1. Navigate to http://localhost:8000/ui
-2. Select model from dropdown
-3. Enter query in textarea
-4. Click "Send"
+# Test with curl
+curl "http://localhost:8000/v1/getAnswer?q=Configure%20OSPF&model=gemini"
+```
 
-### Test Programmatically
+### Test via Python
 ```python
 import requests
 
@@ -331,6 +381,16 @@ response = requests.get(
     }
 )
 print(response.json())
+```
+
+---
+
+## 🧹 Cleanup
+
+### Remove Virtual Environment
+```bash
+deactivate  # First deactivate if active
+rm -rf .venv
 ```
 
 ---
