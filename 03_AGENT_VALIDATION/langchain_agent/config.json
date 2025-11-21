@@ -1,13 +1,12 @@
 {
-  "T0_BASE_URL": "http://t1:8000", 
+  "T1_BASE_URL": "http://t1:8000", 
   "T2_BASE_URL": "http://t2:8000", 
   "T3_BASE_URL": "http://t3:5000", 
-  "T1_BASE_URL": "http://t1:8000", 
 
-  "T0_ENDPOINT_QA_LOOKUP": "/qa/query", 
+  "T1_ENDPOINT_QA_LOOKUP": "/qa/query", 
+  "T1_ENDPOINT_WRITE": "/qa", 
   "T2_ENDPOINT_GENERATE": "/v1/getAnswer", 
   "T3_ENDPOINT_VALIDATE": "/evaluate", 
-  "T1_ENDPOINT_WRITE": "/qa", 
 
   "HTTP_TIMEOUT": 90,
   "LOG_LEVEL": "INFO",

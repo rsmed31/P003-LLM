@@ -23,16 +23,15 @@ else:
 def get_cfg(key, default=None):
     return cfg.get(key) or os.getenv(key, default)
 
-T0_BASE_URL = get_cfg("T0_BASE_URL", "http://t0:8000").rstrip("/")
+T1_BASE_URL = get_cfg("T1_BASE_URL", "http://t1:8000").rstrip("/")
 T2_BASE_URL = get_cfg("T2_BASE_URL", "http://t2:8002").rstrip("/")
 T3_BASE_URL = get_cfg("T3_BASE_URL", "http://t3:8003").rstrip("/")
-T1_BASE_URL = get_cfg("T1_BASE_URL", "").rstrip("/")
 
 # Endpoints
-T0_QA_LOOKUP = get_cfg("T0_ENDPOINT_QA_LOOKUP", "/qa_lookup")
-T2_GENERATE = get_cfg("T2_ENDPOINT_GENERATE", "/generate_config")
+T1_QA_LOOKUP = get_cfg("T1_ENDPOINT_QA_LOOKUP", "/qa/query")
+T1_WRITE = get_cfg("T1_ENDPOINT_WRITE", "/qa")
+T2_GENERATE = get_cfg("T2_ENDPOINT_GENERATE", "/v1/getAnswer")
 T3_VALIDATE = get_cfg("T3_ENDPOINT_VALIDATE", "/evaluate")
-T1_WRITE = get_cfg("T1_ENDPOINT_WRITE", "/verify_write")
 
 TIMEOUT = float(get_cfg("HTTP_TIMEOUT", 90))
 LOG_LEVEL = get_cfg("LOG_LEVEL", "INFO").upper()
@@ -202,14 +201,14 @@ def _build_evaluate_payload_from_t2(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"evaluate_payload": evaluate_payload, "joined_config": joined_config}
 
 # ========= Team calls =========
-def call_t0_lookup(query: str) -> Dict[str, Any]:
+def call_t1_qa_lookup(query: str) -> Dict[str, Any]:
     """
-    T0: Q&A lookup via GET.
+    T1: Q&A lookup via GET.
     Expected response:
-      { "hit": true, "answer": "..." }  OR  { "hit": false }
+      { "found": true, "answer": "..." }  OR  { "found": false }
     """
     try:
-        url = f"{T0_BASE_URL}{T0_QA_LOOKUP}"
+        url = f"{T1_BASE_URL}{T1_QA_LOOKUP}"
         params = {"text": query, "threshold": 0.3}
         resp = requests.get(url, params=params, timeout=TIMEOUT)
         resp.raise_for_status()
@@ -222,7 +221,7 @@ def call_t0_lookup(query: str) -> Dict[str, Any]:
         return {"found": found, "answer": data.get("answer")}
 
     except Exception as e:
-        log.warning(f"T0 lookup failed (continuing to T2): {e}")
+        log.warning(f"T1 QA lookup failed (continuing to T2): {e}")
         return {"found": False}
 
 def call_t2_generate(query: str, model: str = "gemini") -> Dict[str, Any]:
@@ -271,6 +270,7 @@ def call_t3_validate(evaluate_payload: Dict[str, Any]) -> Dict[str, Any]:
     return _post(f"{T3_BASE_URL}{T3_VALIDATE}", evaluate_payload)
 
 def call_t1_write(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Write validated config back to T1's knowledge base."""
     if not T1_BASE_URL:
         return {"status": "SKIPPED", "reason": "no_t1"}
     try:
@@ -309,20 +309,20 @@ Return plain text."""
 verdict_chain = verdict_prompt | llm | StrOutputParser()
 
 # ========= LangChain pipeline (deterministic with a conditional gate) =========
-def _structure_final_from_t0(x: Dict[str, Any]) -> Dict[str, Any]:
-    """When T0 hits, we stop and return the cached/KB answer."""
+def _structure_final_from_t1(x: Dict[str, Any]) -> Dict[str, Any]:
+    """When T1 QA hits, we stop and return the cached/KB answer."""
     return {
-        "source": "T0",
+        "source": "T1_QA",
         "query": x["query"],
         "answer": x["qa"]["answer"],
         "explanation": "Returned from Q&A knowledge base (cache hit).",
         "config": None,
         "validation": None,
-        "write_back": {"status": "SKIPPED", "reason": "T0_hit"}
+        "write_back": {"status": "SKIPPED", "reason": "T1_qa_hit"}
     }
 
 def _structure_final_from_t2_t3(x: Dict[str, Any]) -> Dict[str, Any]:
-    """When T0 misses, we go through T2/T3 and synthesize a verdict."""
+    """When T1 QA misses, we go through T2/T3 and synthesize a verdict."""
     status = (x["validation"] or {}).get("status", "UNKNOWN")
     wb = {"status": "SKIPPED", "reason": "validation_failed"}
     if status == "PASS":
@@ -339,14 +339,14 @@ def _structure_final_from_t2_t3(x: Dict[str, Any]) -> Dict[str, Any]:
 # Gate 1: normalize input to dict shape
 start = RunnableLambda(lambda x: {"query": x["query"] if isinstance(x, dict) else x})
 
-# Gate 2: T0 lookup
-with_t0 = start.assign(qa=lambda x: call_t0_lookup(x["query"]))
+# Gate 2: T1 QA lookup
+with_t1_qa = start.assign(qa=lambda x: call_t1_qa_lookup(x["query"]))
 
-# Branch: if qa.hit -> stop; else -> run T2/T3 + verdict
+# Branch: if qa.found -> stop; else -> run T2/T3 + verdict
 def _maybe_run_t2_t3(x: Dict[str, Any]) -> Dict[str, Any]:
-    if x["qa"].get("hit"):
-        # Short-circuit: return final from T0
-        return {"final": _structure_final_from_t0(x)}
+    if x["qa"].get("found"):
+        # Short-circuit: return final from T1 QA
+        return {"final": _structure_final_from_t1(x)}
     # Else: T2 generate
     cfg = call_t2_generate(x["query"])
     # T3 validate
@@ -360,7 +360,7 @@ def _maybe_run_t2_t3(x: Dict[str, Any]) -> Dict[str, Any]:
     return {"query": x["query"], "config": cfg, "validation": val, "verdict_text": vtext}
 
 AgentChain: RunnableSequence = (
-    with_t0
+    with_t1_qa
     .assign(maybe=_maybe_run_t2_t3)
     .assign(result=lambda x:
             x["maybe"]["final"] if "final" in x["maybe"]
@@ -426,12 +426,12 @@ if __name__ == "__main__":
         help="Model to ask Team 2 with (if applicable).",
     )
     parser.add_argument(
-        "--skip-t0",
+        "--skip-t1-qa",
         action="store_true",
-        help="Skip Team 0 lookup even if available.",
+        help="Skip Team 1 Q&A lookup even if available.",
     )
     parser.add_argument(
-        "--skip-t1",
+        "--skip-t1-write",
         action="store_true",
         help="Skip Team 1 write-back even if available.",
     )
@@ -445,16 +445,17 @@ if __name__ == "__main__":
     print("\n================ Agent Orchestrator v2 – RUN ================\n")
     print("CONFIG")
     print("------")
-    print(f"T0_BASE_URL            = {T0_BASE_URL}{T0_QA_LOOKUP}")
+    print(f"T1_BASE_URL            = {T1_BASE_URL}")
+    print(f"  ├─ QA Lookup         = {T1_QA_LOOKUP}")
+    print(f"  └─ Write-back        = {T1_WRITE}")
     print(f"T2_BASE_URL            = {T2_BASE_URL}{T2_GENERATE}")
     print(f"T3_BASE_URL            = {T3_BASE_URL}{T3_VALIDATE}")
-    print(f"T1_BASE_URL            = {T1_BASE_URL or '(disabled)'}{T1_WRITE if T1_BASE_URL else ''}")
     print(f"HTTP_TIMEOUT           = {TIMEOUT}")
     print(f"LOG_LEVEL              = {LOG_LEVEL}")
     print(f"GROQ_API_KEY present   = {bool(get_cfg('GROQ_API_KEY'))}")
     print(f"Default T2 model       = {args.model}")
     print(f"Query                  = {args.query}")
-    print(f"Flags                  = skip_t0={args.skip_t0}, skip_t1={args.skip_t1}, no_llm={args.no_llm}")
+    print(f"Flags                  = skip_t1_qa={args.skip_t1_qa}, skip_t1_write={args.skip_t1_write}, no_llm={args.no_llm}")
     print()
 
     def _print_section(title: str):
@@ -472,13 +473,12 @@ if __name__ == "__main__":
     # 0) Health checks (lightweight, non-fatal if endpoint doesn't expose health)
     _print_section("Health checks (non-fatal)")
     try:
-        # T0 GET example check
-        if not args.skip_t0 and T0_BASE_URL:
-            probe = f"{T0_BASE_URL}/"
+        if not args.skip_t1_qa and T1_BASE_URL:
+            probe = f"{T1_BASE_URL}/"
             r = requests.get(probe, timeout=5)
-            print(f"T0 lookup check: {r.status_code} for {probe}")
+            print(f"T1 health check: {r.status_code} for {probe}")
     except Exception as e:
-        print(f"[warn] T0 health check failed: {e}")
+        print(f"[warn] T1 health check failed: {e}")
 
     try:
         if T2_BASE_URL:
@@ -495,29 +495,29 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[warn] T3 health check failed: {e}")
 
-    # 1) T0 (optional)
-    qa = {"hit": False}
-    if not args.skip_t0:
-        _print_section("Team 0 – Q&A lookup (GET)")
+    # 1) T1 Q&A lookup (optional)
+    qa = {"found": False}
+    if not args.skip_t1_qa:
+        _print_section("Team 1 – Q&A lookup (GET)")
         try:
-            qa = call_t0_lookup(args.query)
-            print("T0 response:", json.dumps(qa, indent=2, ensure_ascii=False))
+            qa = call_t1_qa_lookup(args.query)
+            print("T1 QA response:", json.dumps(qa, indent=2, ensure_ascii=False))
         except Exception as e:
-            print("[warn] T0 lookup failed, continuing to T2…")
-            qa = {"hit": False}
+            print("[warn] T1 QA lookup failed, continuing to T2…")
+            qa = {"found": False}
     else:
-        print("Skipping T0 by flag")
+        print("Skipping T1 QA by flag")
 
-    if qa.get("hit"):
-        _print_section("Short-circuit on T0 hit")
+    if qa.get("found"):
+        _print_section("Short-circuit on T1 QA hit")
         result = {
-            "source": "T0",
+            "source": "T1_QA",
             "query": args.query,
             "answer": qa.get("answer"),
             "explanation": "Returned from Q&A knowledge base (cache hit).",
             "config": None,
             "validation": None,
-            "write_back": {"status": "SKIPPED", "reason": "T0_hit"},
+            "write_back": {"status": "SKIPPED", "reason": "T1_qa_hit"},
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
         print("\n========================= END =========================\n")
@@ -563,8 +563,8 @@ if __name__ == "__main__":
     # 5) Optional T1 write-back
     _print_section("Team 1 – Write-back (optional)")
     try:
-        if args.skip_t1 or not T1_BASE_URL:
-            print("Skipping T1 (disabled or flag).")
+        if args.skip_t1_write or not T1_BASE_URL:
+            print("Skipping T1 write-back (disabled or flag).")
             wb = {"status": "SKIPPED", "reason": "disabled_or_flag"}
         else:
             wb = call_t1_write({"query": args.query, "config": gen["joined_config"], "validation": val})
