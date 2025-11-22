@@ -348,7 +348,7 @@ make T1_PORT=9000 T2_PORT=9001 T3_PORT=9002 run-all
 
 **Version:** 2.0.0  
 **Last Updated:** 2025  
-**License:** MIT (or your license)
+
 
 ### Key Features
 - ✅ Single global virtual environment (`.venv/`)
