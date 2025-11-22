@@ -94,6 +94,7 @@ pip install -r requirements.txt
 │   ├── inference.json          # Model configuration
 │   ├── keys.env                # API keys & endpoints
 │   ├── retrieval_config.json   # Protocol-specific chunk counts
+│   ├── context.json            # Context history log (auto-generated)
 │   └── zephyr_configurator     # Ollama Modelfile
 ├── prompts/
 │   └── prompts.json            # Modular prompt templates
@@ -270,6 +271,50 @@ SYSTEM You are a network configuration engine...
 **To Apply Changes:**
 ```bash
 ollama create zephyr_configurator -f models/zephyr_configurator
+```
+
+---
+
+### 8. **Context Logging** (`models/context.json`)
+
+**Auto-generated file** that logs every RAG request for debugging and analysis:
+
+```json
+{
+  "history": [
+    {
+      "timestamp": "2025-01-23T12:34:56.789Z",
+      "model": "gemini",
+      "query": "Configure OSPF on 3 routers",
+      "chunks_retrieved": 6,
+      "chunks": [
+        {
+          "index": 1,
+          "text": "OSPF (Open Shortest Path First)..."
+        }
+      ],
+      "built_context": "## CODE-AWARE CONTEXT:\n...",
+      "context_length": 5432
+    }
+  ]
+}
+```
+
+**Features:**
+- Automatic logging of every RAG request
+- Stores last 50 queries (rotating buffer)
+- Includes query, chunks, built context, and metadata
+- Useful for debugging prompt issues and RAG performance
+
+**View Context History:**
+```bash
+cat models/context.json | jq '.history[-1]'  # Last query
+cat models/context.json | jq '.history | length'  # Total logged
+```
+
+**Clear Context History:**
+```bash
+echo '{"history":[]}' > models/context.json
 ```
 
 ---

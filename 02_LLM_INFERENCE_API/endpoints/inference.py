@@ -2,6 +2,7 @@ import google.generativeai as genai
 import os
 import json
 import requests
+import datetime  # Add this import
 from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -238,6 +239,58 @@ def safe_load_prompts(path: str) -> dict:
 import logging
 logger = logging.getLogger("team2_inference")
 
+# --- CONTEXT STORAGE ---
+def save_context_to_file(query: str, chunks: list, built_context: str, model_name: str):
+    """
+    Save query context to models/context.json for debugging and analysis.
+    
+    Args:
+        query: User's original query
+        chunks: List of retrieved chunk texts
+        built_context: Final assembled context (with CODE/THEORY sections)
+        model_name: Model that will use this context
+    """
+    context_file = os.path.join(os.path.dirname(__file__), '..', 'models', 'context.json')
+    
+    try:
+        # Load existing history
+        if os.path.exists(context_file):
+            with open(context_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            data = {"history": []}
+        
+        # Create entry
+        entry = {
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "model": model_name,
+            "query": query,
+            "chunks_retrieved": len(chunks),
+            "chunks": [
+                {
+                    "index": i + 1,
+                    "text": chunk[:300] + "..." if len(chunk) > 300 else chunk
+                }
+                for i, chunk in enumerate(chunks)
+            ],
+            "built_context": built_context,
+            "context_length": len(built_context)
+        }
+        
+        # Append to history (keep last 50 entries)
+        data["history"].append(entry)
+        if len(data["history"]) > 50:
+            data["history"] = data["history"][-50:]
+        
+        # Write back
+        with open(context_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        print(f"[INFO] Context saved to context.json (entry #{len(data['history'])})")
+    
+    except Exception as e:
+        logger.warning(f"Failed to save context to file: {e}")
+
 def generate(
     query: str,
     model_name: str = "gemini",
@@ -272,45 +325,36 @@ def generate(
     print(f"[INFO] loopback={loopback} chunk_count={chunk_count} model='{model_name}'")
 
     filtered_context = ""
+    retrieved_chunks = []  # NEW: Store chunks for logging
+    
     if not loopback and config.get("supports_rag", False) and RETRIEVAL_SERVICE_URL:
         try:
-            # Updated endpoint: /chunks/query with query and limit parameters
             response = requests.get(
                 f"{RETRIEVAL_SERVICE_URL}/chunks/query",
                 params={"query": query, "limit": chunk_count},
                 timeout=1000
             )
+            
             if response.status_code == 200:
                 data = response.json()
                 
-                # Parse new response format
                 if data.get("found", False):
                     results = data.get("results", [])
-                    
-                    # Extract text chunks from results - LIMIT HERE TOO
                     chunks = [item["text"] for item in results if "text" in item][:chunk_count]
+                    retrieved_chunks = chunks  # Store for logging
                     
                     print(f"[INFO] Retrieved {len(chunks)} chunks from service (limit: {chunk_count})")
                     
-                    # For Llama, skip orchestrator and use simple context
                     if model_name == "llama":
-                        # Simple join for Llama - no correlation analysis
                         filtered_context = "\n---\n".join(chunks) if chunks else ""
                     else:
-                        # Perform local correlation analysis for Gemini only
                         if chunks and _LOCAL_ORCHESTRATOR:
-                            # Temporarily add chunks to local orchestrator for analysis
                             _LOCAL_ORCHESTRATOR.add_chunks(chunks)
-                            
-                            # Get correlation-analyzed results
                             correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
                             
-                            # Rebuild context with proper ordering (code + theory sections)
                             code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
                             theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
                             
-
-                            # Build separated context
                             context_parts = []
                             if code_chunks:
                                 context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
@@ -320,25 +364,23 @@ def generate(
 
                             filtered_context = "\n\n".join(context_parts) if context_parts else ""
                             
-                            # Log correlation metrics
-                            print(f"[INFO] Correlation Score: {correlation_result['correlation_score']}")
-                            print(f"[INFO] Overall Confidence: {correlation_result['overall_confidence']}")
+                            print(f"[INFO] Correlation Score: {correlation_result.get('correlation_score', 'N/A')}")
+                            print(f"[INFO] Overall Confidence: {correlation_result.get('overall_confidence', 'N/A')}")
+                            print(f"[INFO] Code chunks: {len(code_chunks)}, Theory chunks: {len(theory_chunks)}")
                         else:
-                            # Fallback: simple join if orchestrator unavailable
                             filtered_context = "\n---\n".join(chunks) if chunks else ""
                 else:
                     print(f"[WARN] No matching chunks found for query")
-                    filtered_context = ""
-        except requests.exceptions.RequestException as e:
-            print(f"[WARN] Failed to retrieve context from external service: {e}")
-            filtered_context = ""
         except Exception as e:
-            print(f"[WARN] Error processing retrieval response: {e}")
-            filtered_context = ""
+            print(f"[WARN] Error processing retrieval: {e}")
 
     # Force no context if loopback
     if loopback:
         filtered_context = ""
+
+    # Save context to file (only if RAG was used and context exists)
+    if not loopback and filtered_context:
+        save_context_to_file(query, retrieved_chunks, filtered_context, model_name)
 
     # Generate response via LLM
     if model_name == "gemini":
