@@ -358,4 +358,3 @@ make T1_PORT=9000 T2_PORT=9001 T3_PORT=9002 run-all
 - ✅ Loopback fallback on validation failure
 - ✅ Protocol-agnostic validation with Batfish
 - ✅ Multi-model support (Gemini 2.0, Llama 3.1/3.3)
-- ✅ Strict LLM output validation (no synthetic fallbacks)
