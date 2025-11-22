@@ -1,15 +1,25 @@
 {
-  "T1_BASE_URL": "http://t1:8000", 
-  "T2_BASE_URL": "http://t2:8000", 
-  "T3_BASE_URL": "http://t3:5000", 
-
-  "T1_ENDPOINT_QA_LOOKUP": "/qa/query", 
-  "T1_ENDPOINT_WRITE": "/qa", 
-  "T2_ENDPOINT_GENERATE": "/v1/getAnswer", 
-  "T3_ENDPOINT_VALIDATE": "/evaluate", 
-
+  "T1_BASE_URL": "http://localhost:8000",
+  "T2_BASE_URL": "http://localhost:8001",
+  "T3_BASE_URL": "http://localhost:5000",
+  "T1_ENDPOINT_QA_LOOKUP": "/qa/query",
+  "T1_ENDPOINT_WRITE": "/qa",
+  "T2_ENDPOINT_GENERATE": "/v1/getAnswer",
+  "T3_ENDPOINT_VALIDATE": "/evaluate",
   "HTTP_TIMEOUT": 90,
   "LOG_LEVEL": "INFO",
-  "GROQ_API_KEY": "your_groq_api_key_here",
-  "T2_DEFAULT_MODEL": "llama"
+  "GROQ_API_KEY": "YOUR_GROQ_API",
+  "GROQ_MODEL": "llama-3.3-70b-versatile",
+  "T2_DEFAULT_MODEL": "gemini",
+  "INTENT_TYPES_SUPPORTED": [
+    "adjacency",
+    "connectivity",
+    "reachability",
+    "interface",
+    "policy",
+    "redundancy"
+  ],
+  "SNAPSHOT_PACKAGE_MODE": "configs",
+  "RECHECK_MAX_ATTEMPTS": 1,
+  "LOOPBACK_ON_FAIL": true
 }

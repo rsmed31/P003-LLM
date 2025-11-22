@@ -77,11 +77,6 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Deactivate When Done
-```bash
-deactivate
-```
-
 ---
 
 ## 📁 Project Structure
@@ -219,20 +214,6 @@ async def get_answer(q: str, model: str = "llama"):
 6. Clean and validate JSON response
 7. Return structured output
 
-**Key Functions to Modify:**
-
-```python
-# Change model behavior
-def callGemini(model, prompt):
-    # Customize Gemini API call parameters
-    response = model.generate_content(prompt)
-    return response.text.strip()
-
-# Change output cleaning strategy
-def clean_model_output(text: str) -> str:
-    # Aggressive extraction of JSON array from model response
-    # Modify if model wraps output differently
-```
 
 **Common Customization Points:**
 - **Temperature**: Adjust in Modelfile (`zephyr_configurator`) or Gemini config
@@ -265,12 +246,6 @@ def assemble_rag_prompt_gemini(system_file_path, filtered_context, user_query):
 </s>
 <|assistant|>
 ```
-
-**Modification Tips:**
-- Change chat template markers for different base models
-- Adjust context injection point for optimal performance
-- Test prompt order variations (context before/after task)
-
 ---
 
 ### 7. **Ollama Model Configuration** (`models/zephyr_configurator`)
@@ -310,98 +285,6 @@ model: str = Query(
 )
 ```
 
-### Disable RAG
-Edit `models/inference.json`:
-```json
-"supports_rag": false
-```
-
-### Add New Protocol Chunk Count
-Edit `models/retrieval_config.json`:
-```json
-"protocol_chunks": {
-  "mpls": 150,
-  "your_protocol": 80
-}
-```
-
-### Change JSON Schema
-Edit `prompts/prompts.json` → `JSON_SCHEMA_BODY` section, then test thoroughly with both models.
-
-### Adjust Cleaning Aggressiveness
-Edit `endpoints/inference.py` → `clean_model_output()` function to handle model-specific output patterns.
-
----
-
-## 🐛 Troubleshooting
-
-### "Model output is not valid JSON"
-1. Check `clean_model_output()` is extracting correctly
-2. Verify prompt in `prompts.json` has strong format instructions
-3. Test model directly via Ollama CLI: `ollama run zephyr_configurator`
-4. Inspect raw model output (uncomment print statements in `inference.py`)
-
-### Port 8000 in use
-Change port in run command:
-```bash
-python -m uvicorn app:app --host 0.0.0.0 --port 8080
-```
-
-### Empty response from model
-1. Check API keys in `models/keys.env`
-2. Verify Ollama is running: `ollama list`
-3. Test external retrieval service connectivity
-4. Review logs for HTTP errors
-
-### CORS issues
-Already configured for open access. If still blocked, check browser console and verify middleware in `app.py`.
-
----
-
-## 📊 Testing
-
-### Test via Command Line
-```bash
-# Activate venv first
-source .venv/bin/activate
-
-# Test with curl
-curl "http://localhost:8000/v1/getAnswer?q=Configure%20OSPF&model=gemini"
-```
-
-### Test via Python
-```python
-import requests
-
-response = requests.get(
-    "http://localhost:8000/v1/getAnswer",
-    params={
-        "q": "Configure OSPF area 0 on R1 with router-id 1.1.1.1",
-        "model": "llama"
-    }
-)
-print(response.json())
-```
-
----
-
-## 🧹 Cleanup
-
-### Remove Virtual Environment
-```bash
-deactivate  # First deactivate if active
-rm -rf .venv
-```
-
----
-
-## 🔐 Security Notes
-
-- **API Keys**: Never commit `keys.env` to version control
-- **CORS**: Current config allows all origins - restrict in production
-- **Input Validation**: Queries are validated (min 3 chars, max enforced by FastAPI)
-- **Rate Limiting**: Not implemented - add middleware for production
-
 ---
 
 ## 📝 API Reference
@@ -413,11 +296,13 @@ rm -rf .venv
 |------|------|----------|---------|-------------|
 | q | string | Yes | - | User query (min 3 chars) |
 | model | string | No | "llama" | "gemini" or "llama" |
+| rag | string | No | "on" | "on" for RAG, "off" for direct inference |
 
 **Response:** `200 OK`
 ```json
 {
   "model": "llama",
+  "rag_enabled": true,
   "response": [
     {
       "device_name": "R1",
@@ -429,44 +314,75 @@ rm -rf .venv
 }
 ```
 
+**Example Requests:**
+```bash
+# With RAG (default)
+curl "http://localhost:8001/v1/getAnswer?q=configure+ospf&model=gemini"
+
+# Without RAG (direct inference)
+curl "http://localhost:8001/v1/getAnswer?q=configure+ospf&model=gemini&rag=off"
+```
+
 **Errors:**
 - `500`: Model error or processing failure
-- `502`: Empty response from model
+- `502`: Empty response from model or schema validation failure
+  - Missing required fields (device_name, configuration_mode_commands, protocol, intent)
+  - Empty configuration_mode_commands array
+  - Malformed device objects
+
+**Schema Validation:**
+The endpoint performs strict schema validation. All device objects MUST contain:
+- `device_name` (string): Device identifier
+- `configuration_mode_commands` (array): Non-empty list of CLI commands
+- `protocol` (string): Routing protocol (OSPF/BGP/EIGRP/STATIC)
+- `intent` (array): List of adjacency/connectivity intents
+
+Missing or incomplete fields will result in HTTP 502 error with detailed explanation.
 
 ---
 
-## 🤝 Integration with Other Teams
+### `GET /test`
 
-### For Team 1 (RAG Service)
-Expected endpoint format:
-```
-GET /chunks/query?query={query}&limit={chunk_count}
-Response: 
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| q | string | Yes | - | Query to test (no model call) |
+| model | string | No | "llama" | "gemini" or "llama" |
+
+**Description:** Debug endpoint that shows RAG pipeline behavior without calling the model. Returns:
+- Retrieval service status
+- Number of chunks retrieved
+- Filtered context preview
+- Assembled prompt preview
+- Target API endpoint
+
+**Response:** `200 OK`
+```json
 {
-  "found": true,
-  "results": [
-    {
-      "chunk_index": 42,
-      "text": "OSPF is a routing protocol...",
-      "similarity": 0.89
-    }
-  ],
-  "count": 2,
-  "message": "Found 2 matching chunks"
+  "query": "configure ospf",
+  "model": "gemini",
+  "rag_enabled": true,
+  "retrieval_service": "http://localhost:8000",
+  "chunks_requested": 100,
+  "chunks_retrieved": 10,
+  "chunks_preview": [...],
+  "filtered_context": "...",
+  "prompt_preview": "...",
+  "full_prompt_length": 5432,
+  "would_send_to": "https://generativelanguage.googleapis.com/...",
+  "retrieval_error": null
 }
 ```
 
-**Configuration:**
-Set `RETRIEVAL_SERVICE_URL` in `models/keys.env` to the base URL (e.g., `http://192.168.103.100:8000`).
-The system automatically appends `/chunks/query` endpoint path.
-
-### For Team 3 (Frontend/Orchestration)
-Call `/v1/getAnswer` with query and preferred model. Response contains structured JSON array ready for execution pipeline.
-
 ---
 
-## 📌 Version
+### `GET /health`
 
-**Current Version:** 1.0.0  
-**Last Updated:** 2025  
-**Maintainer:** Team 2
+**Description:** Health check endpoint
+
+**Response:** `200 OK`
+```json
+{
+  "ok": true
+}
+```

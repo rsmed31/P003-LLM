@@ -175,201 +175,162 @@ Health check endpoint.
 
 ---
 
-## 🐛 Troubleshooting
+## 🚀 Access API Documentation
 
-### Batfish container not starting
+Start validator:
 ```bash
-# Check Batfish logs
-docker compose logs batfish
-
-# Restart Batfish
-docker compose restart batfish
+cd 03_AGENT_VALIDATION/batfish
+python validator.py
 ```
 
-### Validator can't connect to Batfish
-```bash
-# Verify network connectivity
-docker compose exec validator ping batfish
+Open Swagger UI:
+- **Interactive Docs**: http://localhost:5000/docs
+- **Alternative (ReDoc)**: http://localhost:5000/redoc
+- **Health Check**: http://localhost:5000/health
 
-# Check Batfish health
-docker compose exec validator curl http://batfish:9996/
-```
+### Test with Swagger UI:
+1. Navigate to http://localhost:5000/docs
+2. Expand `POST /evaluate`
+3. Click "Try it out"
+4. Use example payload or modify
+5. Click "Execute"
+6. Review response
 
-### Config files not found
-```bash
-# Ensure configs directory exists and has files
-ls -la configs/
-
-# Check volume mount
-docker compose exec validator ls -la /app/configs/
-```
-
-### Permission issues with volumes
-```bash
-# Reset volumes
-docker compose down -v
-docker compose up --build
-```
-
----
-
-## 🧪 Testing
-
-### Test with Sample Data
+### Example curl test:
 ```bash
 curl -X POST http://localhost:5000/evaluate \
   -H "Content-Type: application/json" \
   -d '{
     "changes": {
-      "R1": ["interface lo0", "ip address 1.1.1.1 255.255.255.255"]
+      "R1": ["interface Loopback0", " ip address 10.1.1.1 255.255.255.255"],
+      "R2": ["interface Loopback0", " ip address 10.2.2.2 255.255.255.255"]
     },
     "intent": {
       "reach": [{"src": "R1", "dst": "R2"}]
     }
-  }' | python -m json.tool
+  }'
 ```
 
-### Integration Test via Agent
-```bash
-cd ../../langchain_agent
-python agent_service.py --query "Configure OSPF on 3 routers"
-```
+# Team 3 - Batfish Validator
+
+Network configuration validation using Batfish simulation.
 
 ---
 
-## 🔄 Updating Configurations
+## 🚀 Quick Start
 
-### Add New Base Config
 ```bash
-# Create new device config
-echo "hostname R4" > configs/R4.cfg
-
-# Restart validator to pick up changes
-docker compose restart validator
-```
-
-### Reset to Clean State
-```bash
-# Stop and remove volumes
-docker compose down -v
-
-# Rebuild and start
 docker compose up --build -d
+curl http://localhost:5000/health
 ```
 
 ---
 
-## 🐳 Docker Commands Reference
+## 🐛 Common Errors
 
-### Basic Operations
+### "A Batfish nodeSpec must be a string"
+
+**Error:**
+```
+Expected type: 'nodeSpec' for parameter: 'nodes'. Got error: 'A Batfish nodeSpec must be a string'
+```
+
+**Cause:**  
+The validator passed a Python list/set to Batfish, but it expects a comma-separated string.
+
+**Fix:**  
+Already applied in `validator.py` - `_run_cp()` now converts device lists to strings:
+```python
+nodes_spec = ",".join(str(d) for d in changed_devices)
+```
+
+**Verify Fix:**
 ```bash
-# Start services
+docker logs validator | grep "CP check for nodes"
+# Should show: CP check for nodes: R1,R2,R3
+```
+
+---
+
+### Base Snapshot Missing
+
+**Error:**
+```
+COPY_BASE_SNAPSHOT failed: [Errno 2] No such file or directory
+```
+
+**Fix:**
+```bash
+# Ensure base snapshot exists
+ls 03_AGENT_VALIDATION/batfish/configs/
+
+# Should contain: *.cfg files for base topology
+```
+
+---
+
+### Batfish Not Ready
+
+**Error:**
+```
+Batfish not ready after timeout
+```
+
+**Fix:**
+```bash
+# Increase timeout
+docker compose down
+# Edit docker-compose.yml: BATFISH_READY_TIMEOUT=180
 docker compose up -d
 
-# Stop services
-docker compose stop
-
-# Remove containers (keeps volumes)
-docker compose down
-
-# Remove everything including volumes
-docker compose down -v
-
-# View logs
-docker compose logs -f [service_name]
-
-# Restart a service
-docker compose restart [service_name]
-```
-
-### Development
-```bash
-# Rebuild after code changes
-docker compose up --build
-
-# Execute commands in container
-docker compose exec validator python -c "print('test')"
-
-# Access container shell
-docker compose exec validator /bin/bash
-```
-
-### Debugging
-```bash
-# Check container status
-docker compose ps
-
-# Inspect volumes
-docker volume ls
-docker volume inspect batfish_batfish-data
-
-# View resource usage
-docker stats
+# Check Batfish logs
+docker logs batfish
 ```
 
 ---
 
-## 🔗 Integration with Makefile
+## 📝 API Reference
 
-The master Makefile includes commands for this service:
+### POST /evaluate
 
-```bash
-# From project root (P003-LLM/)
-make run-t3           # Start validator with Docker Compose
-make logs-t3          # View validator logs
-make stop             # Stop all services including validator
+**Payload:**
+```json
+{
+  "changes": {
+    "R1": ["router ospf 1", "network 10.0.0.0 0.0.0.255 area 0"],
+    "R2": ["router ospf 1", "network 10.0.1.0 0.0.0.255 area 0"]
+  },
+  "intent": {
+    "reach": [
+      {"src": "R1", "dst": "R2"}
+    ]
+  }
+}
 ```
 
----
-
-## 📦 Batfish Data Persistence
-
-Batfish data is stored in a named volume `batfish-data`:
-
-```bash
-# Backup Batfish data
-docker run --rm -v batfish_batfish-data:/data -v $(pwd):/backup \
-  alpine tar czf /backup/batfish-backup.tar.gz -C /data .
-
-# Restore Batfish data
-docker run --rm -v batfish_batfish-data:/data -v $(pwd):/backup \
-  alpine tar xzf /backup/batfish-backup.tar.gz -C /data
+**Response (Success):**
+```json
+{
+  "result": "OK",
+  "snapshot": "snapshot-verify-abc123",
+  "summary": {
+    "CP": {"status": "PASS", "rows": 6},
+    "TP": {"status": "PASS", "edges": 3},
+    "REACH": [
+      {"src": "R1", "dst": "R2", "status": "PASS", "error": ""}
+    ]
+  }
+}
 ```
 
----
-
-## 🚨 Production Considerations
-
-1. **Resource Limits**: Add to `docker-compose.yml`:
-   ```yaml
-   services:
-     batfish:
-       deploy:
-         resources:
-           limits:
-             cpus: '2.0'
-             memory: 4G
-   ```
-
-2. **Security**: Don't expose Batfish ports publicly (remove port mappings for 9996, 9997)
-
-3. **Monitoring**: Add health checks and alerts
-
-4. **Logging**: Configure log rotation:
-   ```yaml
-   services:
-     validator:
-       logging:
-         driver: "json-file"
-         options:
-           max-size: "10m"
-           max-file: "3"
-   ```
-
----
-
-## 📌 Version
-
-**Batfish Image:** `batfish/allinone:latest`  
-**Validator Version:** 1.0.0  
-**Last Updated:** 2025
+**Response (Error):**
+```json
+{
+  "result": "ERROR",
+  "stage": "VERIFY",
+  "error": "A Batfish nodeSpec must be a string",
+  "trace": ["..."],
+  "changed_devices": ["R1", "R2"],
+  "reach_paths": [{"src": "R1", "dst": "R2"}]
+}
+```

@@ -87,6 +87,46 @@ Each device object must contain:
 
 ## 🚀 Usage
 
+### Interactive Mode (Recommended)
+
+Launch the interactive CLI with real-time pipeline visualization:
+
+```bash
+# From project root (activate global venv first)
+cd 03_AGENT_VALIDATION\langchain_agent
+python interactive.py
+```
+
+**Features:**
+- 🎨 Beautiful real-time pipeline visualization
+- 📊 Step-by-step progress tracking
+- 🔄 Live configuration preview
+- 💬 Chat-like interface
+- ⚡ Fast model switching
+
+**Commands:**
+- `<query>` - Process a network configuration query
+- `model gemini` - Switch to Gemini model
+- `model llama` - Switch to Llama model
+- `status` - Show current configuration
+- `help` - Show all commands
+- `exit` / `quit` - Exit interactive mode
+
+**Example Session:**
+```
+> configure ospf on 3 routers
+```
+```bash
+# gemini model
+model gemini
+# llama model
+model llama
+# show status
+status
+# exit
+exit
+```
+
 ### Run Full Pipeline
 ```bash
 python agent_service.py --query "Configure OSPF on 3 routers" --model gemini
@@ -105,6 +145,13 @@ python agent_service.py --query "..." --skip-t1-write
 ### Use Different Model
 ```bash
 python agent_service.py --query "..." --model llama
+```
+
+### Makefile Shortcut
+```bash
+# From project root
+make interactive            # Launch interactive CLI
+make T3_MODE=interactive run-t3   # Start Batfish + interactive agent
 ```
 
 ---
@@ -130,23 +177,6 @@ Edit `config.json`:
 
 ---
 
-## 📞 Team Contact for Issues
-
-### T1 (Data/RAG Service)
-- **Q&A not returning results**: Check threshold in `call_t1_qa_lookup()` (currently 0.3)
-- **Write-back failing**: Verify T1's `/qa` POST endpoint accepts validated configs
-
-### T2 (LLM Inference)
-- **Invalid JSON**: Check Team 2's model output cleaning in `endpoints/inference.py`
-- **Missing fields**: Verify `prompts/prompts.json` schema instructions
-- **String responses**: Team 2's model may need better output format training
-
-### T3 (Validation)
-- **Validation errors**: Check payload transformation in `_build_evaluate_payload_from_t2()`
-- **Intent parsing**: Verify adjacency intent format matches T3 expectations
-
----
-
 ## 🔍 Debugging
 
 Check logs for these markers:
@@ -155,6 +185,23 @@ Check logs for these markers:
 - `[T3]` - Validation requests
 - `[T1]` (if implemented) - Q&A and write operations
 
+### Common T3 Validation Errors
+
+**Error: "A Batfish nodeSpec must be a string"**
+- **Cause**: Device names passed as list instead of comma-separated string
+- **Fix**: Applied in validator.py `_run_cp()` - converts list to string
+- **Check**: Verify `changes` dict keys are valid device names (no special chars)
+
+**Error: "No reachable paths found"**
+- **Cause**: Devices not connected or missing IP configuration
+- **Fix**: Ensure generated config includes interface IPs and routing
+- **Debug**: Check base snapshot has proper topology
+
+**Error: "VERIFY failed"**
+- **Cause**: Batfish query exception (missing nodes, invalid syntax)
+- **Fix**: Check validator logs for detailed stack trace
+- **Debug**: Test with simpler config (single device, no intents)
+
 ### Enable Debug Logging
 Edit `config.json`:
 ```json
@@ -162,3 +209,50 @@ Edit `config.json`:
   "LOG_LEVEL": "DEBUG"
 }
 ```
+
+## 📜 Pipeline Logging (LangChain Callbacks)
+
+The agent writes JSONL trace events to `03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log`.
+
+Enable/disable (default enabled):
+```
+LOG_EVENTS=1   # enabled
+LOG_EVENTS=0   # disabled
+LOG_DIR=custom/path  # optional
+```
+
+Events captured:
+- chain_start / chain_end
+- llm_start / llm_end / llm_error
+- t3_http_error / t3_error
+- agent_result
+
+Tail the log:
+```bash
+tail -f 03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log
+```
+
+Pretty-print last 10 events (jq):
+```bash
+jq -r '.event + " | " + .ts' 03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log | tail -n 10
+```
+
+Filter only LLM prompts:
+```bash
+grep '"event":"llm_start"' 03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log | jq '.prompts'
+```
+
+To disable logging temporarily:
+```bash
+export LOG_EVENTS=0
+python agent_service.py --query "Configure OSPF..."
+```
+
+## ⚠️ Known Limitation: OSPF Validation Requires Complete Configs
+
+**Issue:** If Team 2 returns only `router ospf` stanzas without interface IPs, validation will fail (0 edges, no reachability).
+
+**Root Cause:**
+- Batfish requires interfaces with IP addresses to build topology
+- OSPF network statements must match actual interface IPs
+- Loopback-only configs (fallback) cannot form adjacencies
