@@ -69,22 +69,6 @@ Team 2's `/v1/getAnswer` endpoint **must** return:
 }
 ```
 
-### Fallback Support
-
-The agent also handles:
-- **String format**: `{"response": "configure terminal\n..."}`
-- **Direct list**: `[{"device_name": "R1", ...}]`
-
-### Critical Fields
-
-Each device object must contain:
-- `device_name` (string): Router/switch identifier
-- `configuration_mode_commands` (list of strings): CLI commands
-- `protocol` (string, optional): Protocol type
-- `intent` (list, optional): Validation intents
-
----
-
 ## 🚀 Usage
 
 ### Interactive Mode (Recommended)
