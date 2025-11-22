@@ -9,8 +9,6 @@ Multi-team LLM-powered network configuration generation and validation pipeline.
 ### Required Software
 
 **1. Python 3.9+**
-- Download: https://www.python.org/downloads/
-- Verify: `python --version`
 - Minimum version: 3.9
 - Recommended: 3.11 or 3.12
 
