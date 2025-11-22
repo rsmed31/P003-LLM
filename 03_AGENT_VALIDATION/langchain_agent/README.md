@@ -127,6 +127,46 @@ status
 exit
 ```
 
+### Interactive Mode (Recommended)
+
+Launch the interactive CLI with real-time pipeline visualization:
+
+```bash
+# From project root (activate global venv first)
+cd 03_AGENT_VALIDATION\langchain_agent
+python interactive.py
+```
+
+**Features:**
+- 🎨 Beautiful real-time pipeline visualization
+- 📊 Step-by-step progress tracking
+- 🔄 Live configuration preview
+- 💬 Chat-like interface
+- ⚡ Fast model switching
+
+**Commands:**
+- `<query>` - Process a network configuration query
+- `model gemini` - Switch to Gemini model
+- `model llama` - Switch to Llama model
+- `status` - Show current configuration
+- `help` - Show all commands
+- `exit` / `quit` - Exit interactive mode
+
+**Example Session:**
+```
+> configure ospf on 3 routers
+```
+```bash
+# gemini model
+model gemini
+# llama model
+model llama
+# show status
+status
+# exit
+exit
+```
+
 ### Run Full Pipeline
 ```bash
 python agent_service.py --query "Configure OSPF on 3 routers" --model gemini
@@ -184,6 +224,23 @@ Check logs for these markers:
 - `[T2]` - HTTP calls to Team 2
 - `[T3]` - Validation requests
 - `[T1]` (if implemented) - Q&A and write operations
+
+### Common T3 Validation Errors
+
+**Error: "A Batfish nodeSpec must be a string"**
+- **Cause**: Device names passed as list instead of comma-separated string
+- **Fix**: Applied in validator.py `_run_cp()` - converts list to string
+- **Check**: Verify `changes` dict keys are valid device names (no special chars)
+
+**Error: "No reachable paths found"**
+- **Cause**: Devices not connected or missing IP configuration
+- **Fix**: Ensure generated config includes interface IPs and routing
+- **Debug**: Check base snapshot has proper topology
+
+**Error: "VERIFY failed"**
+- **Cause**: Batfish query exception (missing nodes, invalid syntax)
+- **Fix**: Check validator logs for detailed stack trace
+- **Debug**: Test with simpler config (single device, no intents)
 
 ### Common T3 Validation Errors
 
