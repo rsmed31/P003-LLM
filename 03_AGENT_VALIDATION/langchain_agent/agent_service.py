@@ -1,6 +1,12 @@
 import os, json, logging
+import warnings
+# Suppress Pydantic V1 compatibility warning
+warnings.filterwarnings("ignore", message=".*Pydantic V1 functionality.*", category=UserWarning)
+
 from typing import Dict, Any, Optional, List, Tuple, Set
 import requests
+import datetime, pathlib
+from langchain_core.callbacks.base import BaseCallbackHandler
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -39,6 +45,57 @@ LOG_LEVEL = get_cfg("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("agent-v2")
 
+LOG_DIR = get_cfg("LOG_DIR", os.path.join(HERE, "logs"))
+LOG_EVENTS = get_cfg("LOG_EVENTS", "1") in ("1", "true", "True", "yes")
+# Load intent types from config (full candidate set)
+INTENT_TYPES_CONFIG = set(get_cfg("INTENT_TYPES_SUPPORTED", [
+    "adjacency", "connectivity", "reachability", "interface", "policy", "redundancy"
+]))
+# Active set will be determined per response
+
+pathlib.Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+_pipeline_log_path = os.path.join(LOG_DIR, "pipeline.log")
+
+class PipelineCallback(BaseCallbackHandler):
+    """LangChain callback that appends JSONL events for tracing."""
+    def _write(self, event: str, data: Dict[str, Any]):
+        try:
+            payload = {
+                "ts": datetime.datetime.utcnow().isoformat() + "Z",
+                "event": event,
+                **data
+            }
+            with open(_pipeline_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as e:
+            log.warning(f"Callback write failed: {e}")
+
+    def on_chain_start(self, serialized, inputs, **kwargs):
+        if LOG_EVENTS:
+            self._write("chain_start", {"name": serialized.get("name"), "inputs": inputs})
+
+    def on_chain_end(self, outputs, **kwargs):
+        if LOG_EVENTS:
+            self._write("chain_end", {"outputs": outputs})
+
+    def on_llm_start(self, serialized, prompts, **kwargs):
+        if LOG_EVENTS:
+            self._write("llm_start", {"prompts": prompts})
+
+    def on_llm_end(self, response, **kwargs):
+        if LOG_EVENTS:
+            self._write("llm_end", {"response": getattr(response, "generations", [])})
+
+    def on_llm_error(self, error, **kwargs):
+        if LOG_EVENTS:
+            self._write("llm_error", {"error": str(error)})
+
+    def on_chain_error(self, error, **kwargs):
+        if LOG_EVENTS:
+            self._write("chain_error", {"error": str(error)})
+
+_callbacks = [PipelineCallback()]
+
 # ========= HTTP helper =========
 def _post(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     r = requests.post(url, json=payload, timeout=TIMEOUT)
@@ -49,6 +106,16 @@ def _get(url: str) -> Dict[str, Any]:
     r = requests.get(url, timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()
+
+def _probe_t1() -> bool:
+    """Check if Team 1 service is reachable via health check."""
+    if not T1_BASE_URL:
+        return False
+    try:
+        r = requests.get(f"{T1_BASE_URL}/health", timeout=5)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 _TERMINAL_NOOPS = {"configure terminal", "end", "exit"}
 
@@ -88,6 +155,37 @@ def _intents_to_reach(intents: List[dict]) -> List[dict]:
         seen.add(key)
         # Arbitrarily choose direction a->b; T3 can test bidirectional if needed
         reach.append({"src": a, "dst": b})
+    return reach
+
+def _categorize_intents(intents: List[dict], active_types: Set[str]) -> Dict[str, List[dict]]:
+    """Group intents by active type set; ignore unknown types."""
+    buckets: Dict[str, List[dict]] = {k: [] for k in active_types}
+    for it in intents or []:
+        t = (it or {}).get("type", "").lower()
+        if t in buckets:
+            buckets[t].append(it)
+    return buckets
+
+def _intents_to_reach_all(intent_groups: Dict[str, List[dict]]) -> List[dict]:
+    """
+    Build reach list from connectivity/adjacency/reachability intents.
+    Each intent must have >=2 endpoints with 'id'.
+    """
+    reach: List[dict] = []
+    seen: Set[Tuple[str, str]] = set()
+    for key in ("adjacency", "connectivity", "reachability"):
+        for it in intent_groups.get(key, []):
+            eps = (it or {}).get("endpoints") or []
+            # Use first two distinct IDs
+            ids = [e.get("id") for e in eps if isinstance(e, dict) and e.get("id")]
+            if len(ids) < 2:
+                continue
+            a, b = ids[0], ids[1]
+            pair = tuple(sorted([a, b]))
+            if pair in seen:
+                continue
+            seen.add(pair)
+            reach.append({"src": a, "dst": b})
     return reach
 
 def _parse_t2_response(raw_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -141,15 +239,98 @@ def _parse_t2_response(raw_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         detail=f"T2 response format not recognized. Keys: {list(raw_data.keys())}, Type: {type(raw_data)}"
     )
 
+FALLBACK_LOOPBACK_PREFIX = get_cfg("FALLBACK_LOOPBACK_PREFIX", "10.255")
+FALLBACK_MAX_PAIRWISE_REACH = int(get_cfg("FALLBACK_MAX_PAIRWISE_REACH", 20))
+
+# ---- Helper bootstrap (ensure rename helpers exist before use) ----
+def _requires_router_names(query: str) -> bool:
+    q = (query or "").lower()
+    return "router" in q or "routers" in q
+
+def _rename_if_switch(query: str, original: str, index: int) -> str:
+    if _requires_router_names(query) and original.lower().startswith("switch"):
+        return f"R{index+1}"
+    return original
+
+# If accidentally overridden or deleted later, rebind safely
+if "_rename_if_switch" not in globals():
+    def _rename_if_switch(query: str, original: str, index: int) -> str:
+        return original
+
+def _has_interface(cmds: List[str]) -> bool:
+    return any(c.strip().lower().startswith("interface ") for c in cmds)
+
+def _inject_generic_interfaces(changes: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    """
+    Protocol-agnostic fallback: inject Loopback0 + symmetric /30 transit links.
+    Each link creates interfaces on BOTH devices with proper paired IPs.
+    NO routing protocol config (OSPF/BGP/etc) - let T2 decide protocols.
+    """
+    devices = list(changes.keys())
+    n = len(devices)
+    out: Dict[str, List[str]] = {}
+    
+    # Build link assignments
+    link_map: Dict[int, List[Tuple[int, str, str]]] = {i: [] for i in range(n)}
+    
+    # Create symmetric /30 links for linear chain
+    for i in range(n - 1):
+        net_base = f"10.250.{i}.{(i+1)*4}"
+        ip_a = f"{net_base}"
+        ip_b = f"10.250.{i}.{(i+1)*4 + 1}"
+        
+        link_map[i].append((i+1, f"GigabitEthernet0/{i+1}", ip_a))
+        link_map[i+1].append((i, f"GigabitEthernet0/{i}", ip_b))
+    
+    # Apply injections per device
+    for idx, dev in enumerate(devices):
+        cmds = changes[dev]
+        has_iface = _has_interface(cmds)
+        synth: List[str] = []
+        
+        # Inject Loopback0 only if no interfaces exist
+        if not has_iface:
+            loop_ip = f"{FALLBACK_LOOPBACK_PREFIX}.{idx}.1"
+            synth.extend([
+                "interface Loopback0",
+                f" ip address {loop_ip} 255.255.255.255",
+                " no shutdown"  # ADDED: Loopbacks need no shutdown too!
+            ])
+        
+        # Inject transit links
+        for peer_idx, iface_name, my_ip in link_map[idx]:
+            synth.extend([
+                f"interface {iface_name}",
+                f" ip address {my_ip} 255.255.255.252",
+                " no shutdown"
+            ])
+        
+        out[dev] = synth + cmds
+    
+    return out
+
+def _pairwise_reach(devices: List[str], limit: int) -> List[Dict[str, str]]:
+    """
+    Generic reach fallback. If >2 devices and no routing protocol detected,
+    only return adjacent pairs (direct neighbors) to avoid multi-hop false failures.
+    """
+    reach = []
+    n = len(devices)
+    
+    if n <= 2:
+        # Simple case: bidirectional reach
+        if n == 2:
+            reach.append({"src": devices[0], "dst": devices[1]})
+    else:
+        # Linear chain: only adjacent pairs
+        for i in range(n - 1):
+            reach.append({"src": devices[i], "dst": devices[i+1]})
+            if len(reach) >= limit:
+                break
+    
+    return reach
+
 def _build_evaluate_payload_from_t2(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Transform Team2 output into T3 /evaluate payload:
-      {
-        "changes": {"R1": [...], "R2": [...]},
-        "intent": {"reach": [{"src":"R1","dst":"R2"}, ...]}
-      }
-    Also returns a human-readable 'joined_config' for logging/LLM verdict.
-    """
     try:
         resp = _parse_t2_response(data)
     except HTTPException:
@@ -157,47 +338,81 @@ def _build_evaluate_payload_from_t2(data: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         log.error(f"[T2 Parse] Unexpected error: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to parse T2 response: {e}")
-    
     if not resp:
         raise HTTPException(status_code=502, detail="T2 returned empty device list")
 
     changes: Dict[str, List[str]] = {}
-    all_intents: List[dict] = []
+    collected_intents: List[dict] = []
+    original_query = data.get("_original_query", "")
 
     for idx, dev in enumerate(resp):
-        if not isinstance(dev, dict):
-            log.warning(f"[T2 Parse] Device #{idx} is not a dict, skipping: {type(dev)}")
-            continue
-            
-        name = dev.get("device_name") or f"Device{idx+1}"
-        cmds = _clean_commands(dev.get("configuration_mode_commands") or [])
-        
-        if not cmds:
-            log.warning(f"[T2 Parse] {name} produced no actionable commands")
-        
+        raw_name = dev.get("device_name") or f"Device{idx+1}"
+        q_orig = data.get("_original_query", "")
+        name = _rename_if_switch(q_orig, raw_name, idx)
+        raw_cmds = dev.get("configuration_mode_commands") or []
+        cmds = _clean_commands(raw_cmds)
+        cmds = _normalize_cmds(cmds)
+        cmds = _filter_orphan_area(cmds)
+        cmds = _ensure_no_shutdown_on_all_interfaces(cmds)  # NEW: Add no shutdown
         changes[name] = cmds
-        all_intents.extend(dev.get("intent") or [])
-        
-        log.info(f"[T2 Parse] Processed {name}: {len(cmds)} commands, {len(dev.get('intent', []))} intents")
+        collected_intents.extend(dev.get("intent") or [])
+        log.info(f"[T2 Parse] Device {raw_name}->{name}: cmds={len(cmds)} intents={len(dev.get('intent', []))}")
 
-    # Convert intents → reach list
-    reach = _intents_to_reach(all_intents)
-    log.info(f"[T2 Parse] Extracted {len(reach)} reachability intents")
+    # Determine active intent types
+    discovered_types = { (it.get("type") or "").lower() for it in collected_intents if isinstance(it, dict) }
+    must_keep = {"connectivity", "reachability"}
+    active_types = (INTENT_TYPES_CONFIG & discovered_types) | (must_keep & INTENT_TYPES_CONFIG)
+    if "adjacency" in active_types and "adjacency" not in discovered_types and "connectivity" in active_types:
+        active_types.discard("adjacency")
+    log.info(f"[IntentTypes] config={sorted(INTENT_TYPES_CONFIG)} discovered={sorted(discovered_types)} active={sorted(active_types)}")
 
-    # Build a readable joined config (optional, for LLM/reporting)
-    parts = []
+    intent_groups = _categorize_intents(collected_intents, active_types)
+
+    # Reach from intents
+    reach = _intents_to_reach_all(intent_groups)
+
+    # Generic fallback reach if none
+    if not reach and get_cfg("AUTO_INTENT_FALLBACK", True):
+        dev_list = list(changes.keys())
+        auto_reach = _pairwise_reach(dev_list, FALLBACK_MAX_PAIRWISE_REACH)
+        if auto_reach:
+            log.info(f"[Reach Fallback] Generated {len(auto_reach)} pairwise reach intents")
+            reach = auto_reach
+
+    # Inject generic interfaces if missing (agnostic)
+    changes = _inject_generic_interfaces(changes)
+
+    # After interface injection, rebuild configs
+    device_configs = {}
     for name, cmds in changes.items():
-        body = "\n".join(cmds) if cmds else "! No commands"
-        parts.append(f"! ===== BEGIN {name} =====\nhostname {name}\n{body}\n! ===== END {name} =====")
+        device_configs[name] = _render_device_config(name, cmds)
+
+    # Build joined_config (for LLM) from rendered device configs
+    parts = []
+    for name, cfg_text in device_configs.items():
+        parts.append(f"! ===== BEGIN {name} =====\n{cfg_text}! ===== END {name} =====")
     joined_config = "\n".join(parts).strip() + "\n"
 
-    # Final payload for T3
     evaluate_payload = {
         "changes": changes,
-        "intent": {"reach": reach} if reach else {"reach": []}
+        "snapshot": {
+            "configs": device_configs  # T3 can materialize configs/<device>.cfg
+        },
+        "intent": {
+            "reach": reach,
+            "interface": intent_groups.get("interface", []),
+            "policy": intent_groups.get("policy", []),
+            "redundancy": intent_groups.get("redundancy", [])
+        },
+        "meta": {
+            "devices": len(changes),
+            "raw_intents": len(collected_intents),
+            "active_types": list(active_types),
+            "reach_pairs": len(reach),
+            "fallback_used": bool(reach and not collected_intents)
+        }
     }
-    
-    log.info(f"[T2 Parse] Final payload: {len(changes)} devices, {len(reach)} reach intents")
+    log.info(f"[T2 Parse] Final payload devices={len(changes)} reach={len(reach)} configs_packaged={len(device_configs)}")
     return {"evaluate_payload": evaluate_payload, "joined_config": joined_config}
 
 # ========= Team calls =========
@@ -207,6 +422,11 @@ def call_t1_qa_lookup(query: str) -> Dict[str, Any]:
     Expected response:
       { "found": true, "answer": "..." }  OR  { "found": false }
     """
+    # Added pre-probe
+    if not _probe_t1():
+        log.warning("T1 unreachable (health probe failed); skipping QA lookup")
+        return {"found": False}
+    
     try:
         url = f"{T1_BASE_URL}{T1_QA_LOOKUP}"
         params = {"text": query, "threshold": 0.3}
@@ -224,15 +444,39 @@ def call_t1_qa_lookup(query: str) -> Dict[str, Any]:
         log.warning(f"T1 QA lookup failed (continuing to T2): {e}")
         return {"found": False}
 
-def call_t2_generate(query: str, model: str = "gemini") -> Dict[str, Any]:
+RECHECK_MAX = int(get_cfg("RECHECK_MAX_ATTEMPTS", 1))
+LOOPBACK_ON_FAIL = bool(get_cfg("LOOPBACK_ON_FAIL", True))
+_CONFIG_MEMORY: Dict[str, List[str]] = {}
+
+def _fuse_device_cmds(existing: List[str], new: List[str]) -> List[str]:
+    seen = set(existing)
+    fused = existing[:]
+    for cmd in new:
+        if cmd not in seen:
+            fused.append(cmd)
+            seen.add(cmd)
+    return fused
+
+def _fuse_changes(changes: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    for dev, cmds in changes.items():
+        prev = _CONFIG_MEMORY.get(dev, [])
+        _CONFIG_MEMORY[dev] = _fuse_device_cmds(prev, cmds)
+    return {d: _CONFIG_MEMORY[d] for d in changes.keys()}
+
+def call_t2_generate(query: str, model: str = "gemini", rag_enabled: bool = True) -> Dict[str, Any]:
     """
-    Calls Team 2's GET endpoint (/v1/getAnswer) with a configurable model.
-    Returns normalized payload for Team 3.
-    """
-    params = {"q": query, "model": model}
-    url = f"{T2_BASE_URL}{T2_GENERATE}"
+    Call Team 2 config generation.
     
-    log.info(f"[T2] Calling {url} with model={model}")
+    Args:
+        query: User query
+        model: Model to use (gemini/llama)
+        rag_enabled: True for RAG, False for direct inference
+    """
+    # Convert rag_enabled to rag parameter (on/off)
+    rag_param = "on" if rag_enabled else "off"
+    params = {"q": query, "model": model, "rag": rag_param}
+    url = f"{T2_BASE_URL}{T2_GENERATE}"
+    log.info(f"[T2] Calling {url} rag={rag_param} model={model}")
 
     try:
         resp = requests.get(url, params=params, timeout=TIMEOUT)
@@ -244,6 +488,7 @@ def call_t2_generate(query: str, model: str = "gemini") -> Dict[str, Any]:
 
     try:
         raw = resp.json()
+        raw["_original_query"] = query  # embed for downstream naming heuristics
         log.info(f"[T2] Response received, parsing...")
     except Exception as e:
         log.error(f"[T2] Invalid JSON response: {resp.text[:500]}")
@@ -262,31 +507,88 @@ def call_t2_generate(query: str, model: str = "gemini") -> Dict[str, Any]:
 
     return norm
 
-def call_t3_validate(evaluate_payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Sends the normalized payload to T3's /evaluate.
-    Expected reply: { "status": "PASS" | "FAIL", "report": "...", ... }
-    """
-    return _post(f"{T3_BASE_URL}{T3_VALIDATE}", evaluate_payload)
+def call_t3_validate(evaluate_payload: Dict[str, Any], retries: int = 2) -> Dict[str, Any]:
+    log.info(f"[T3] Sending evaluate payload: {json.dumps(evaluate_payload)[:500]}...")
+    
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            return _post(f"{T3_BASE_URL}{T3_VALIDATE}", evaluate_payload)
+        except requests.HTTPError as e:
+            body = e.response.text if e.response is not None else ""
+            log.error(f"[T3] Attempt {attempt}/{retries} HTTPError {e} body={body[:500]}")
+            
+            if LOG_EVENTS:
+                PipelineCallback()._write("t3_http_error", {
+                    "attempt": attempt,
+                    "status": e.response.status_code if e.response else None,
+                    "body": body[:500],
+                    "payload_keys": list(evaluate_payload.keys()),
+                    "changes_devices": list(evaluate_payload.get("changes", {}).keys())
+                })
+            
+            # Parse error from validator if possible
+            try:
+                err_json = json.loads(body)
+                if "stage" in err_json and "error" in err_json:
+                    log.error(f"[T3] Validation stage={err_json['stage']}, error={err_json['error']}")
+            except Exception:
+                pass
+            
+            last_error = e
+            
+            # Don't retry on 4xx (client error)
+            if e.response and 400 <= e.response.status_code < 500:
+                break
+                
+        except Exception as e:
+            log.error(f"[T3] Attempt {attempt}/{retries} Unexpected error: {e}")
+            if LOG_EVENTS:
+                PipelineCallback()._write("t3_error", {"attempt": attempt, "error": str(e)})
+            last_error = e
+    
+    # All retries exhausted
+    raise HTTPException(
+        status_code=502,
+        detail=f"T3 validation failed after {retries} attempts: {last_error}"
+    )
 
 def call_t1_write(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Write validated config back to T1's knowledge base."""
     if not T1_BASE_URL:
         return {"status": "SKIPPED", "reason": "no_t1"}
+    
+    # Transform payload to match T1 /qa POST endpoint schema
+    # Expected: {"question": str, "answer": str}
+    write_payload = {
+        "question": payload.get("query", ""),
+        "answer": payload.get("config", "")
+    }
+    
     try:
-        _post(f"{T1_BASE_URL}{T1_WRITE}", payload)
-        return {"status": "OK"}
+        log.info(f"[T1 Write] Sending payload keys: {list(write_payload.keys())}")
+        resp = _post(f"{T1_BASE_URL}{T1_WRITE}", write_payload)
+        log.info(f"[T1 Write] Success: {resp}")
+        return {"status": "OK", "response": resp}
+    except requests.HTTPError as e:
+        body = e.response.text if e.response is not None else ""
+        log.error(f"[T1 Write] HTTPError {e.response.status_code if e.response else 'unknown'}: {body[:300]}")
+        return {"status": "ERROR", "error": f"HTTP {e.response.status_code if e.response else 'unknown'}", "detail": body[:200]}
     except Exception as e:
         log.warning(f"T1 write failed: {e}")
         return {"status": "ERROR", "error": str(e)}
 
 # ========= LLM for final explanation =========
-# Uses a small, deterministic model to "explain verdict"
+# Uses a deterministic model to "explain verdict"
+GROQ_MODEL = get_cfg("GROQ_MODEL", "llama-3.3-70b-versatile")
+
 llm = ChatGroq(
-    model="llama3-8b-8192",
+    model=GROQ_MODEL,
     temperature=0,
     api_key=get_cfg("GROQ_API_KEY")
 )
+
+log.info(f"Using Groq model: {GROQ_MODEL}")
 
 verdict_prompt = PromptTemplate.from_template(
     """You are a network assistant. Using the inputs, produce a concise verdict and explanation.
@@ -321,19 +623,53 @@ def _structure_final_from_t1(x: Dict[str, Any]) -> Dict[str, Any]:
         "write_back": {"status": "SKIPPED", "reason": "T1_qa_hit"}
     }
 
+def _structure_final_from_t1_verified(x: Dict[str, Any], verdict_text: str, validation: Dict[str, Any], config_text: str) -> Dict[str, Any]:
+    return {
+        "source": "T1_QA_VERIFIED",
+        "query": x["query"],
+        "answer": x["qa"]["answer"],
+        "config": config_text,
+        "validation": validation,
+        "verdict_text": verdict_text,
+        "write_back": {"status": "SKIPPED", "reason": "cached_manual_verify"}
+    }
+
+def _parse_verdict_status(verdict_text: str) -> str:
+    """
+    Extract PASS/FAIL status from LLM verdict text.
+    Returns 'PASS' or 'FAIL' based on keywords in the text.
+    """
+    if not isinstance(verdict_text, str):
+        return "FAIL"
+    text_lower = verdict_text.lower()
+    # Check for pass indicators
+    if any(keyword in text_lower for keyword in ["pass", "right", "correct", "valid", "success"]):
+        return "PASS"
+    # Check for fail indicators
+    if any(keyword in text_lower for keyword in ["fail", "wrong", "incorrect", "invalid", "error"]):
+        return "FAIL"
+    # Default to FAIL if unclear
+    return "FAIL"
+
+# Replace old _structure_final_from_t2_t3
 def _structure_final_from_t2_t3(x: Dict[str, Any]) -> Dict[str, Any]:
-    """When T1 QA misses, we go through T2/T3 and synthesize a verdict."""
-    status = (x["validation"] or {}).get("status", "UNKNOWN")
-    wb = {"status": "SKIPPED", "reason": "validation_failed"}
-    if status == "PASS":
-        wb = call_t1_write({"query": x["query"], "config": x["config"], "validation": x["validation"]})
+    verdict_status = x.get("verdict_status") or _parse_verdict_status(x.get("verdict_text", ""))
+    write_back = {"status": "SKIPPED", "reason": "ai_verdict_fail"}
+    if verdict_status == "PASS":
+        write_back = call_t1_write({"query": x["query"], "config": x["config"], "validation": x["validation"]})
+    if verdict_status == "PASS":
+        # persist memory only when passing
+        for dev, cmds in (x.get("fused_changes") or {}).items():
+            _CONFIG_MEMORY[dev] = cmds
     return {
         "source": "T2_T3",
         "query": x["query"],
         "config": x["config"],
         "validation": x["validation"],
         "verdict_text": x.get("verdict_text"),
-        "write_back": wb
+        "verdict_status": verdict_status,
+        "write_back": write_back,
+        "meta": x.get("meta", {})
     }
 
 # Gate 1: normalize input to dict shape
@@ -345,44 +681,125 @@ with_t1_qa = start.assign(qa=lambda x: call_t1_qa_lookup(x["query"]))
 # Branch: if qa.found -> stop; else -> run T2/T3 + verdict
 def _maybe_run_t2_t3(x: Dict[str, Any]) -> Dict[str, Any]:
     if x["qa"].get("found"):
-        # Short-circuit: return final from T1 QA
+        if x.get("verify_cached"):
+            cached_cfg = _extract_config_from_answer(x["qa"]["answer"])
+            if cached_cfg:
+                eval_payload = _build_payload_from_cached_config(cached_cfg)
+                validation = call_t3_validate(eval_payload)
+                verdict_text = verdict_chain.invoke({
+                    "query": x["query"],
+                    "config": cached_cfg,
+                    "validation_json": json.dumps(validation, ensure_ascii=False)
+                }, config={"callbacks": _callbacks})
+                return {"final": _structure_final_from_t1_verified(x, verdict_text, validation, cached_cfg)}
         return {"final": _structure_final_from_t1(x)}
-    # Else: T2 generate
-    cfg = call_t2_generate(x["query"])
-    # T3 validate
-    val = call_t3_validate(cfg)
-    # LLM verdict
-    vtext = verdict_chain.invoke({
-        "query": x["query"],
-        "config": cfg,
-        "validation_json": json.dumps(val, ensure_ascii=False)
-    })
-    return {"query": x["query"], "config": cfg, "validation": val, "verdict_text": vtext}
 
+    attempts = 0
+    loopback_used = False
+
+    # Primary generation (with RAG based on global setting)
+    rag_enabled = x.get("rag_enabled", True)  # Default to RAG enabled
+    norm1 = call_t2_generate(x["query"], model=get_cfg("T2_DEFAULT_MODEL", "gemini"), rag_enabled=rag_enabled)
+    fused1 = _fuse_changes(norm1["evaluate_payload"]["changes"])
+    norm1["evaluate_payload"]["changes"] = fused1
+    val1 = call_t3_validate(norm1["evaluate_payload"])
+    attempts += 1
+    verdict_text1 = verdict_chain.invoke({
+        "query": x["query"],
+        "config": norm1["joined_config"],
+        "validation_json": json.dumps(val1, ensure_ascii=False)
+    }, config={"callbacks": _callbacks})
+    verdict_status1 = _parse_verdict_status(verdict_text1)
+
+    chosen_norm = norm1
+    chosen_val = val1
+    chosen_vtext = verdict_text1
+    chosen_vstatus = verdict_status1
+    chosen_fused = fused1
+
+    # Loopback fallback only if FAIL AND loopback_enabled flag is set
+    loopback_enabled = x.get("loopback_enabled", LOOPBACK_ON_FAIL)
+    if verdict_status1 == "FAIL" and loopback_enabled:
+        loopback_used = True
+        # Force RAG off for loopback attempt
+        norm2 = call_t2_generate(x["query"], model=get_cfg("T2_DEFAULT_MODEL", "gemini"), rag_enabled=False)
+        fused2 = _fuse_changes(norm2["evaluate_payload"]["changes"])
+        norm2["evaluate_payload"]["changes"] = fused2
+        val2 = call_t3_validate(norm2["evaluate_payload"])
+        attempts += 1
+        verdict_text2 = verdict_chain.invoke({
+            "query": x["query"],
+            "config": norm2["joined_config"],
+            "validation_json": json.dumps(val2, ensure_ascii=False)
+        }, config={"callbacks": _callbacks})
+        verdict_status2 = _parse_verdict_status(verdict_text2)
+
+        if verdict_status2 == "PASS":
+            chosen_norm = norm2
+            chosen_val = val2
+            chosen_vtext = verdict_text2
+            chosen_vstatus = verdict_status2
+            chosen_fused = fused2
+
+    return {
+        "query": x["query"],
+        "config": chosen_norm["joined_config"],
+        "validation": chosen_val,
+        "verdict_text": chosen_vtext,
+        "verdict_status": chosen_vstatus,
+        "fused_changes": chosen_fused,
+        "meta": {
+            "attempts": attempts,
+            "loopback_used": loopback_used,
+            "rag_primary": rag_enabled,
+            "loopback_enabled": loopback_enabled,
+            "devices": list(chosen_fused.keys())
+        }
+    }
+
+# Final chain assembly (adjusted to pass verdict_status)
 AgentChain: RunnableSequence = (
     with_t1_qa
     .assign(maybe=_maybe_run_t2_t3)
-    .assign(result=lambda x:
-            x["maybe"]["final"] if "final" in x["maybe"]
-            else _structure_final_from_t2_t3({**x, **x["maybe"]})
-    )
+    .assign(result=lambda x: x["maybe"]["final"] if "final" in x["maybe"]
+            else _structure_final_from_t2_t3({**x, **x["maybe"]}))
     .pick("result")
 )
 
-def run_agent(query: str) -> Dict[str, Any]:
-    out = AgentChain.invoke({"query": query})
+# Remove duplicate LOOPBACK_ON_FAIL declaration near bottom if present
+# ...existing code...
+
+def run_agent(query: str, verify_cached: bool = False, rag_enabled: bool = True, loopback_enabled: bool = None) -> Dict[str, Any]:
+    """
+    Run the agent pipeline.
+    
+    Args:
+        query: User query
+        verify_cached: Whether to verify cached answers
+        rag_enabled: Enable RAG (retrieval-augmented generation)
+        loopback_enabled: Enable loopback fallback on failure (None = use config default)
+    """
+    if loopback_enabled is None:
+        loopback_enabled = LOOPBACK_ON_FAIL
+    
+    out = AgentChain.invoke({
+        "query": query,
+        "verify_cached": verify_cached,
+        "rag_enabled": rag_enabled,
+        "loopback_enabled": loopback_enabled
+    }, config={"callbacks": _callbacks})
+    
     log.info("Agent v2 result: %s", json.dumps(out, indent=2))
+    if LOG_EVENTS:
+        PipelineCallback()._write("agent_result", {
+            "query": query,
+            "source": out.get("source"),
+            "has_config": bool(out.get("config")),
+            "verify_cached": verify_cached,
+            "rag_enabled": rag_enabled,
+            "loopback_enabled": loopback_enabled
+        })
     return out
-
-# ========= FastAPI wrapper =========
-app = FastAPI(title="Agent Orchestrator v2 (LangChain)", version="2.0.0")
-
-class RunAgentReq(BaseModel):
-    query: str
-
-@app.post("/run_agent")
-def run_agent_api(req: RunAgentReq):
-    return run_agent(req.query)
 
 def test_t2_t3_pipeline():
     """
@@ -415,174 +832,202 @@ if __name__ == "__main__":
     parser.add_argument(
         "--query",
         type=str,
-        default="Generate OSPF area 0 config for 3 Cisco routers with loopbacks.",
-        help="Natural language request to process.",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=get_cfg("T2_DEFAULT_MODEL", "llama"),
-        choices=["llama", "gemini"],
-        help="Model to ask Team 2 with (if applicable).",
-    )
-    parser.add_argument(
-        "--skip-t1-qa",
-        action="store_true",
-        help="Skip Team 1 Q&A lookup even if available.",
-    )
-    parser.add_argument(
-        "--skip-t1-write",
-        action="store_true",
-        help="Skip Team 1 write-back even if available.",
-    )
-    parser.add_argument(
-        "--no-llm",
-        action="store_true",
-        help="Bypass the verdict LLM (use validation.status/report only).",
+        default="Generate OSPF area 0 config for 3 Cisco routers with loopback"
     )
     args = parser.parse_args()
-
-    print("\n================ Agent Orchestrator v2 – RUN ================\n")
-    print("CONFIG")
-    print("------")
-    print(f"T1_BASE_URL            = {T1_BASE_URL}")
-    print(f"  ├─ QA Lookup         = {T1_QA_LOOKUP}")
-    print(f"  └─ Write-back        = {T1_WRITE}")
-    print(f"T2_BASE_URL            = {T2_BASE_URL}{T2_GENERATE}")
-    print(f"T3_BASE_URL            = {T3_BASE_URL}{T3_VALIDATE}")
-    print(f"HTTP_TIMEOUT           = {TIMEOUT}")
-    print(f"LOG_LEVEL              = {LOG_LEVEL}")
-    print(f"GROQ_API_KEY present   = {bool(get_cfg('GROQ_API_KEY'))}")
-    print(f"Default T2 model       = {args.model}")
-    print(f"Query                  = {args.query}")
-    print(f"Flags                  = skip_t1_qa={args.skip_t1_qa}, skip_t1_write={args.skip_t1_write}, no_llm={args.no_llm}")
-    print()
-
-    def _print_section(title: str):
-        print(f"\n--- {title} ---")
-
-    def _fatal(msg: str, exc: Exception | None = None):
-        print("\n[FAIL] " + msg)
-        if exc:
-            print("Exception:", exc)
-            tb = traceback.format_exc()
-            print(tb)
-        print("\n========================= END =========================\n")
-        raise SystemExit(1)
-
-    # 0) Health checks (lightweight, non-fatal if endpoint doesn't expose health)
-    _print_section("Health checks (non-fatal)")
+    
+    # Simple CLI runner
     try:
-        if not args.skip_t1_qa and T1_BASE_URL:
-            probe = f"{T1_BASE_URL}/"
-            r = requests.get(probe, timeout=5)
-            print(f"T1 health check: {r.status_code} for {probe}")
+        print("Agent Orchestrator v2 - Query:", args.query)
+        res = run_agent(args.query)
+        print("Result:", json.dumps(res, indent=2))
     except Exception as e:
-        print(f"[warn] T1 health check failed: {e}")
+        print("Error:", str(e))
+        traceback.print_exc()
 
-    try:
-        if T2_BASE_URL:
-            probe = f"{T2_BASE_URL}{T2_GENERATE}?{urlencode({'q':'ping','model':args.model})}"
-            r = requests.get(probe, timeout=5)
-            print(f"T2 getAnswer check: {r.status_code} for {probe}")
-    except Exception as e:
-        print(f"[warn] T2 health check failed: {e}")
+def _normalize_cmds(cmds: List[str]) -> List[str]:
+    """Trim whitespace, drop empty lines."""
+    return [c.strip() for c in cmds if c and c.strip()]
 
-    try:
-        if T3_BASE_URL:
-            # Don't actually evaluate, just show the URL
-            print(f"T3 evaluate endpoint available at: {T3_BASE_URL}{T3_VALIDATE}")
-    except Exception as e:
-        print(f"[warn] T3 health check failed: {e}")
+def _filter_orphan_area(cmds: List[str]) -> List[str]:
+    if not cmds:
+        return []
 
-    # 1) T1 Q&A lookup (optional)
-    qa = {"found": False}
-    if not args.skip_t1_qa:
-        _print_section("Team 1 – Q&A lookup (GET)")
-        try:
-            qa = call_t1_qa_lookup(args.query)
-            print("T1 QA response:", json.dumps(qa, indent=2, ensure_ascii=False))
-        except Exception as e:
-            print("[warn] T1 QA lookup failed, continuing to T2…")
-            qa = {"found": False}
-    else:
-        print("Skipping T1 QA by flag")
+    parent_prefixes = (
+        "router ",           # router ospf 1 / router bgp 65000 / etc.
+        "interface ",        # interface GigabitEthernet0/1
+        "network ",          # network statement (OSPF/EIGRP)
+        "address-family ",   # BGP address-family blocks
+        "line ",             # line vty 0 4
+        "ip route",          # static route base (rare modifier patterns)
+    )
 
-    if qa.get("found"):
-        _print_section("Short-circuit on T1 QA hit")
-        result = {
-            "source": "T1_QA",
-            "query": args.query,
-            "answer": qa.get("answer"),
-            "explanation": "Returned from Q&A knowledge base (cache hit).",
-            "config": None,
-            "validation": None,
-            "write_back": {"status": "SKIPPED", "reason": "T1_qa_hit"},
+    modifier_prefixes = (
+        "area ",               # OSPF area spec
+        "metric ",             # routing metric adjustments
+        "cost ",               # OSPF cost
+        "passive-interface ",  # interface passive directive
+        "timers ",             # generic timers line
+        "redistribute ",       # redistribution line
+        "default-information ",# OSPF default origination addition
+        "route-map ",          # route-map (if orphan - rarely useful alone)
+        "neighbor ",           # BGP/EIGRP neighbor directive
+        "distance ",           # admin distance tuning
+    )
+
+    out: List[str] = []
+    for line in cmds:
+        raw = line.strip()
+        low = raw.lower()
+
+        # Detect orphan modifier
+        is_modifier = any(low.startswith(pref) for pref in modifier_prefixes)
+        if is_modifier:
+            if out:
+                prev = out[-1]
+                prev_low = prev.lower()
+
+                # If previous is a parent directive and does not contain the modifier already, merge
+                if any(prev_low.startswith(p) for p in parent_prefixes) and low not in prev_low:
+                    out[-1] = f"{prev} {raw}"  # append inline
+                    continue  # merged -> skip adding standalone modifier
+            # If cannot merge, drop the orphan modifier silently
+            continue
+
+        # Normal line, keep
+        out.append(raw)
+
+    return out
+
+def _render_device_config(name: str, cmds: List[str]) -> str:
+    """
+    Render final per-device config text with proper IOS structure.
+    Adds section separators for better Batfish parsing.
+    """
+    lines = [f"hostname {name}", "!"]
+    
+    # Group commands by section
+    current_section = []
+    for cmd in cmds:
+        stripped = cmd.strip()
+        if not stripped:
+            continue
+        
+        # Start of new section (interface, router, etc.)
+        if stripped.lower().startswith(("interface ", "router ", "line ")):
+            if current_section:
+                lines.extend(current_section)
+                lines.append("!")
+                current_section = []
+            current_section.append(cmd)
+        else:
+            current_section.append(cmd)
+    
+    # Add remaining section
+    if current_section:
+        lines.extend(current_section)
+        lines.append("!")
+    
+    # Ensure end marker
+    lines.append("end")
+    
+    return "\n".join(lines) + "\n"
+
+def _looks_like_config(line: str) -> bool:
+    """Heuristic to decide if a line is a configuration command."""
+    l = line.strip().lower()
+    return (
+        l.startswith(("interface ", "router ", "hostname ", "ip address ", "vlan ", "switchport ", "access-list ", "ipv6 ", "no "))
+        or l.startswith("network ")
+    )
+
+def _extract_config_from_answer(answer: str) -> Optional[str]:
+    """
+    Attempt to extract config-like block from a cached QA answer.
+    Returns joined config text or None if insufficient signal.
+    """
+    if not isinstance(answer, str):
+        return None
+    lines = [ln.rstrip() for ln in answer.splitlines() if ln.strip()]
+    cfg_lines = [ln for ln in lines if _looks_like_config(ln)]
+    # Require a minimum number of config lines
+    if len(cfg_lines) < 3:
+        return None
+    # Ensure a hostname if absent
+    if not any(l.lower().startswith("hostname ") for l in cfg_lines):
+        cfg_lines.insert(0, "hostname CachedDevice")
+    return "\n".join(cfg_lines) + "\n"
+
+def _build_payload_from_cached_config(config_text: str) -> Dict[str, Any]:
+    """
+    Build a minimal evaluate_payload structure from a single cached config text.
+    """
+    cmds = [c for c in (config_text.splitlines()) if c.strip()]
+    # Strip leading hostname into device name if present
+    dev_name = "CachedDevice"
+    if cmds and cmds[0].lower().startswith("hostname "):
+        dev_name = cmds[0].split(None, 1)[1].strip()
+        cmds = cmds[1:]
+    changes = {dev_name: cmds}
+    device_configs = {dev_name: "hostname " + dev_name + "\n" + "\n".join(cmds) + "\n"}
+    return {
+        "changes": changes,
+        "snapshot": {"configs": device_configs},
+        "intent": {
+            "reach": [],  # unknown from cached answer
+            "interface": [],
+            "policy": [],
+            "redundancy": []
+        },
+        "meta": {
+            "devices": 1,
+            "raw_intents": 0,
+            "active_types": [],
+            "reach_pairs": 0,
+            "fallback_used": False,
+            "source": "cached_answer"
         }
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        print("\n========================= END =========================\n")
-        raise SystemExit(0)
-
-    # 2) T2
-    _print_section("Team 2 – Generate (GET)")
-    try:
-        gen = call_t2_generate(args.query, model=args.model)
-        print("Normalized T2 output:", json.dumps(gen, indent=2, ensure_ascii=False))
-    except requests.HTTPError as e:
-        _fatal(f"T2 HTTP error ({e.response.status_code}) at {T2_BASE_URL}{T2_GENERATE}", e)
-    except Exception as e:
-        _fatal("T2 call/normalize failed", e)
-
-    # 3) T3
-    _print_section("Team 3 – Validate (POST)")
-    try:
-        val = call_t3_validate(gen["evaluate_payload"])
-        print("T3 validation:", json.dumps(val, indent=2, ensure_ascii=False))
-    except requests.HTTPError as e:
-        _fatal(f"T3 HTTP error ({e.response.status_code}) at {T3_BASE_URL}{T3_VALIDATE}", e)
-    except Exception as e:
-        _fatal("T3 validation failed", e)
-
-    # 4) Verdict text (LLM or stub)
-    _print_section("Verdict synthesis")
-    try:
-        if args.no_llm:
-            status = (val or {}).get("status", "UNKNOWN")
-            report = (val or {}).get("report", "")
-            vtext = f"{status}: {report or 'no report'}"
-        else:
-            vtext = verdict_chain.invoke({
-                "query": args.query,
-                "config": gen["joined_config"],
-                "validation_json": json.dumps(val, ensure_ascii=False),
-            })
-        print("Verdict text:\n", vtext)
-    except Exception as e:
-        _fatal("Verdict synthesis failed", e)
-
-    # 5) Optional T1 write-back
-    _print_section("Team 1 – Write-back (optional)")
-    try:
-        if args.skip_t1_write or not T1_BASE_URL:
-            print("Skipping T1 write-back (disabled or flag).")
-            wb = {"status": "SKIPPED", "reason": "disabled_or_flag"}
-        else:
-            wb = call_t1_write({"query": args.query, "config": gen["joined_config"], "validation": val})
-        print("T1 write-back:", json.dumps(wb, indent=2, ensure_ascii=False))
-    except Exception as e:
-        print("[warn] T1 write-back failed:", e)
-        wb = {"status": "ERROR", "error": str(e)}
-
-    # 6) Final object
-    _print_section("FINAL RESULT")
-    final = {
-        "source": "T2_T3",
-        "query": args.query,
-        "config": gen["joined_config"],
-        "validation": val,
-        "verdict_text": vtext,
-        "write_back": wb,
     }
-    print(json.dumps(final, indent=2, ensure_ascii=False))
-    print("\n========================= END =========================\n")
 
+def _ensure_no_shutdown_on_all_interfaces(cmds: List[str]) -> List[str]:
+    """
+    Ensure every interface block ends with 'no shutdown' if missing.
+    Handles both Loopback and physical interfaces.
+    """
+    out = []
+    in_interface = False
+    interface_has_no_shut = False
+    
+    for line in cmds:
+        l = line.strip().lower()
+        
+        # Detect interface block start
+        if l.startswith("interface "):
+            # Finalize previous interface if needed
+            if in_interface and not interface_has_no_shut:
+                out.append(" no shutdown")
+            
+            in_interface = True
+            interface_has_no_shut = False
+            out.append(line)
+        
+        # Check for existing no shutdown
+        elif in_interface and l == "no shutdown":
+            interface_has_no_shut = True
+            out.append(line)
+        
+        # End of interface block (router/line/hostname/etc)
+        elif l.startswith(("router ", "line ", "hostname ", "!", "end", "exit")):
+            if in_interface and not interface_has_no_shut:
+                out.append(" no shutdown")
+            in_interface = False
+            out.append(line)
+        
+        else:
+            out.append(line)
+    
+    # Handle last interface
+    if in_interface and not interface_has_no_shut:
+        out.append(" no shutdown")
+    
+    return out

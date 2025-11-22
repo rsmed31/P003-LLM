@@ -6,74 +6,69 @@ Multi-team LLM-powered network configuration generation and validation pipeline.
 
 ## 🚀 Quick Start
 
-### 1. Install Everything (Creates Virtual Environments)
+### 1. Install (creates ONE global virtual environment .venv/)
 ```bash
 make install
 ```
 
-This creates separate `.venv` directories for each team:
-- `01_DATA_ASSETS/.venv`
-- `02_LLM_INFERENCE_API/.venv`
-- `03_AGENT_VALIDATION/langchain_agent/.venv`
-- `03_AGENT_VALIDATION/batfish/.venv`
-
 ### 2. Configure API URLs
 ```bash
-# Interactive wizard
+make config            # Uses defaults (localhost ports)
 make config-interactive
-
-# Or use defaults
-make config
 ```
 
-### 3. Run All Services
+### 3. Start all services
 ```bash
 make run-all
 ```
 
-### 4. Test the Pipeline
+### 4. Test the pipeline
 ```bash
 make test-full
 ```
 
----
+### 5. Interactive Mode (Optional - Recommended)
 
-## 🐍 Virtual Environments
-
-Each team has its own isolated Python environment to prevent dependency conflicts.
-
-### Why Virtual Environments?
-
-- ✅ **Isolation**: Each service has its own dependencies
-- ✅ **No Conflicts**: Different versions of same packages
-- ✅ **Clean System**: Don't pollute global Python
-- ✅ **Reproducible**: Exact dependency versions
-
-### Manual Activation
-
-If you need to work on a specific team:
+Launch the interactive agent CLI:
 
 ```bash
-# Team 1
-cd 01_DATA_ASSETS
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# Using Make
+make interactive
 
-# Team 2
-cd 02_LLM_INFERENCE_API
-source .venv/bin/activate
+# Or directly
+cd 03_AGENT_VALIDATION\langchain_agent
+python interactive.py
+```
 
-# Team 3 Agent
-cd 03_AGENT_VALIDATION/langchain_agent
-source .venv/bin/activate
+**Interactive Features:**
+- 🎨 Real-time pipeline visualization
+- 💬 Chat-like interface
+- 🔄 Live configuration preview
+- ⚡ Fast model switching (gemini/llama)
+- 📊 Step-by-step progress tracking
 
-# Team 3 Batfish
-cd 03_AGENT_VALIDATION/batfish
+---
+
+## 🐍 Virtual Environment (Global)
+
+Only one environment at the project root:
+```
+./.venv/
+```
+Team 1 (PostgreSQL + API) runs in Docker only.
+
+Activate manually:
+```bash
+# Windows (PowerShell or CMD)
+.\.venv\Scripts\activate
+
+# Linux/macOS
 source .venv/bin/activate
 ```
 
-### Check Virtual Environment Status
+Deactivate:
 ```bash
-make status
+deactivate
 ```
 
 ---
@@ -136,6 +131,17 @@ make activate-t2       # Show command to activate T2 venv
 make activate-t3       # Show command to activate T3 venv
 ```
 
+### Interactive Mode
+```bash
+make interactive      # Launch interactive agent CLI
+```
+
+### Interactive Agent
+```bash
+make interactive              # CLI only
+make T3_MODE=interactive run-t3   # Batfish + interactive agent
+```
+
 ---
 
 ## 🏗️ Architecture
@@ -160,6 +166,21 @@ make activate-t3       # Show command to activate T3 venv
 └─────────────────┘  └──────────────────┘  └──────────────────┘
 ```
 
+## 📁 Project Structure
+(Updated to show single global venv)
+```
+P003-LLM/
+├── .venv/                      # Global virtual environment (Teams 2 & 3)
+├── Makefile
+├── 01_DATA_ASSETS/
+│   └── postgres_api/           # Docker-only (Team 1)
+├── 02_LLM_INFERENCE_API/
+├── 03_AGENT_VALIDATION/
+│   ├── langchain_agent/
+│   └── batfish/
+└── README.md
+```
+
 ---
 
 ## 🔧 Custom Configuration
@@ -180,39 +201,9 @@ make config-interactive
 
 **Manual configuration:**
 - **Groq API**: `03_AGENT_VALIDATION/langchain_agent/config.json`
+  - Get API key: https://console.groq.com/keys
+  - Model: `llama-3.3-70b-versatile` (default)
 - **Gemini API**: `02_LLM_INFERENCE_API/models/keys.env`
-
----
-
-## 📁 Project Structure
-
-```
-P003-LLM/
-├── .gitignore                  # 🆕 Excludes .venv from git
-├── Makefile                    # Master orchestration with venv support
-├── 01_DATA_ASSETS/             # Team 1: PostgreSQL + RAG
-│   ├── .venv/                  # 🆕 Virtual environment
-│   ├── requirements.txt        # Python dependencies
-│   ├── docker-compose.yml
-│   └── app.py
-├── 02_LLM_INFERENCE_API/       # Team 2: LLM Generation
-│   ├── .venv/                  # 🆕 Virtual environment
-│   ├── requirements.txt        # Python dependencies
-│   ├── app.py
-│   ├── endpoints/
-│   └── models/
-└── 03_AGENT_VALIDATION/        # Team 3: Orchestration
-    ├── langchain_agent/
-    │   ├── .venv/              # 🆕 Virtual environment
-    │   ├── requirements.txt    # Python dependencies
-    │   ├── config.json         # Auto-configured
-    │   └── agent_service.py
-    └── batfish/
-        ├── .venv/              # 🆕 Virtual environment
-        ├── requirements.txt    # Python dependencies
-        ├── Dockerfile
-        └── docker-compose.yml
-```
 
 ---
 
@@ -304,15 +295,20 @@ make stop
 make run-all
 ```
 
----
+Docker not running:
+```bash
+# Start Docker Desktop on Windows before: make run-t1 or make run-all
+```
 
-## 📞 Team Responsibilities
+Global venv missing:
+```bash
+make install
+```
 
-| Team | Service | Port | Key Files |
-|------|---------|------|-----------|
-| T1 | Data/RAG | 8000 | `01_DATA_ASSETS/app.py` |
-| T2 | LLM Inference | 8001 | `02_LLM_INFERENCE_API/app.py` |
-| T3 | Agent + Validation | 5000 | `03_AGENT_VALIDATION/langchain_agent/agent_service.py` |
+Port conflicts:
+```bash
+make T2_PORT=9005 T3_PORT=5010 run-all
+```
 
 ---
 
@@ -321,3 +317,9 @@ make run-all
 **Current Version:** 2.0.0  
 **Last Updated:** 2025  
 **Makefile Support:** ✅ Added
+
+### Validation Fallback
+
+If Team 2 returns only OSPF 'network' statements:
+- Synthetic interfaces & reach pairs are auto-generated to allow Batfish validation.
+- Provide real interface + adjacency intents to improve fidelity.

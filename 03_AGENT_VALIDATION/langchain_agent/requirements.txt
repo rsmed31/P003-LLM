@@ -4,3 +4,4 @@ langchain-groq>=0.1.0
 langchain-core>=0.1.0
 pydantic>=2.5.0
 requests>=2.31.0
+rich>=13.7.0

@@ -195,13 +195,26 @@ def parse_and_validate_array(json_text: str):
     if not isinstance(obj, list):
         raise ValueError("Model output is valid JSON but not a JSON array.")
 
-    # Basic per-item checks
+    # All fields are mandatory
+    required_keys = ["device_name", "configuration_mode_commands", "protocol", "intent"]
+    
     for i, entry in enumerate(obj):
         if not isinstance(entry, dict):
+            logger.error(f"[VALIDATION] Element {i} is not a dict, type={type(entry)}")
             raise ValueError(f"Array element {i} is not an object.")
-        if 'device_name' not in entry or 'protocol' not in entry or 'configuration_mode_commands' not in entry:
-            raise ValueError(f"Array element {i} missing required keys.")
-        # you can add schema enforcement here...
+        
+        # Check all required keys are present
+        missing_keys = [k for k in required_keys if k not in entry]
+        if missing_keys:
+            logger.error(f"[VALIDATION] Element {i} FAILED validation")
+            logger.error(f"[VALIDATION] Required keys: {required_keys}")
+            logger.error(f"[VALIDATION] Element actual keys: {list(entry.keys())}")
+            logger.error(f"[VALIDATION] Missing keys: {missing_keys}")
+            logger.error(f"[VALIDATION] Element content (first 800 chars): {json.dumps(entry, indent=2)[:800]}")
+            logger.error(f"[VALIDATION] Full cleaned response (first 1500 chars): {json_text[:1500]}")
+            logger.error(f"[VALIDATION] Full array length: {len(obj)}")
+            raise ValueError(f"Array element {i} missing required keys: {', '.join(missing_keys)}")
+    
     return obj
 
 # --- MAIN GENERATION LOGIC ---
@@ -214,9 +227,21 @@ try:
 except Exception:
     _LOCAL_ORCHESTRATOR = None
 
+# NOTE (#file:prompts.json): If prompts.json load fails we silently continue without system instructions.
+def safe_load_prompts(path: str) -> dict:
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {"SYSTEM_PROMPT": "", "CRITICAL_RULE_INSTRUCTION": "", "TASK_INSTRUCTION": ""}
+
+import logging
+logger = logging.getLogger("team2_inference")
+
 def generate(
     query: str,
-    model_name: str = "gemini"
+    model_name: str = "gemini",
+    loopback: bool = False   # NEW: loopback mode disables retrieval/RAG
 ) -> str:
     """
     Main inference function - simplified interface.
@@ -239,16 +264,15 @@ def generate(
         api_key = config.get('api_key')
         api_link = config.get('api_link')
 
-    # Path to system instructions
     system_source = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'prompts.json')
+    _prompts_raw = safe_load_prompts(system_source)
 
-    # Determine dynamic chunk count based on query and model limits
-    chunk_count = get_chunk_count_for_query(query, config)
-    print(f"[INFO] Requesting {chunk_count} chunks for model '{model_name}'")
+    # Determine dynamic chunk count unless loopback
+    chunk_count = 0 if loopback else get_chunk_count_for_query(query, config)
+    print(f"[INFO] loopback={loopback} chunk_count={chunk_count} model='{model_name}'")
 
-    # Fetch context from external retrieval service (endpoint only)
     filtered_context = ""
-    if config.get("supports_rag", False) and RETRIEVAL_SERVICE_URL:
+    if not loopback and config.get("supports_rag", False) and RETRIEVAL_SERVICE_URL:
         try:
             # Updated endpoint: /chunks/query with query and limit parameters
             response = requests.get(
@@ -312,52 +336,41 @@ def generate(
             print(f"[WARN] Error processing retrieval response: {e}")
             filtered_context = ""
 
-    # Determine whether to use RAG
-    use_rag = config.get('supports_rag', False) and bool(filtered_context)
+    # Force no context if loopback
+    if loopback:
+        filtered_context = ""
 
     # Generate response via LLM
     if model_name == "gemini":
         system_instructions = load_system_instructions(system_source)
         model = configureGemini(api_key, config['model'], system_instructions=system_instructions)
-        
-        if True:
-            assembled_prompt = assemble_rag_prompt_gemini(
-                system_source,
-                filtered_context,
-                query
-            )
-        else:
-            assembled_prompt = query
-        
+        assembled_prompt = assemble_rag_prompt_gemini(system_source, filtered_context, query)
         unCleanedResponse = callGemini(model, assembled_prompt)
         cleanedResponse = clean_model_output(unCleanedResponse)
-        parsedObject = parse_and_validate_array(cleanedResponse)
-        clean = {
-            "model": model_name,
-            "response": parsedObject
-        }
-        return json.dumps(clean, indent=2)
-    else:
-        # Local model (Ollama/Llama)
-        if True:
-            prompt_to_send = assemble_rag_prompt(
-                system_source,
-                filtered_context,
-                query
-            )
-        else:
-            prompt_to_send = query
-        print(prompt_to_send)
+        logger.debug(f"[GENERATE] Raw model response (first 500 chars): {unCleanedResponse[:500]}")
+        logger.debug(f"[GENERATE] Cleaned response (first 500 chars): {cleanedResponse[:500]}")
         
-        print(f"[DEBUG] Prompt length: {len(prompt_to_send)} chars")
-        unCleanedResponse = callLlama(api_link, prompt_to_send, api_key=api_key, model=config.get('model'))
-        cleanedResponse = clean_model_output(unCleanedResponse)
-        parsedObject = parse_and_validate_array(cleanedResponse)
-        clean = {
-            "model": model_name,
-            "response": parsedObject
-        }
-        return json.dumps(clean, indent=2)
+        logger.info(f"[GENERATE] About to validate response. loopback={loopback} model={model_name}")
+        logger.debug(f"[GENERATE] Raw API response length: {len(unCleanedResponse) if isinstance(unCleanedResponse, str) else 'N/A'}")
+        logger.debug(f"[GENERATE] Cleaned response preview (first 1000 chars): {cleanedResponse[:1000]}")
+        
+        try:
+            parsedObject = parse_and_validate_array(cleanedResponse)
+        except ValueError as ve:
+            logger.error(f"[GENERATE] Validation failed: {ve}")
+            logger.error(f"[GENERATE] Query was: '{query}'")
+            logger.error(f"[GENERATE] Model: {model_name}")
+            logger.error(f"[GENERATE] Loopback: {loopback}")
+            raise
+        
+        return json.dumps({"model": model_name, "response": parsedObject}, indent=2)
+
+    # Llama path
+    prompt_to_send = assemble_rag_prompt(system_source, filtered_context, query)
+    unCleanedResponse = callLlama(api_link, prompt_to_send, api_key=api_key, model=config.get('model'))
+    cleanedResponse = clean_model_output(unCleanedResponse)
+    parsedObject = parse_and_validate_array(cleanedResponse)
+    return json.dumps({"model": model_name, "response": parsedObject}, indent=2)
 
 
 # --- EXAMPLE USAGE ---

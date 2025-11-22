@@ -175,6 +175,44 @@ Health check endpoint.
 
 ---
 
+## 🚀 Access API Documentation
+
+Start validator:
+```bash
+cd 03_AGENT_VALIDATION/batfish
+python validator.py
+```
+
+Open Swagger UI:
+- **Interactive Docs**: http://localhost:5000/docs
+- **Alternative (ReDoc)**: http://localhost:5000/redoc
+- **Health Check**: http://localhost:5000/health
+
+### Test with Swagger UI:
+1. Navigate to http://localhost:5000/docs
+2. Expand `POST /evaluate`
+3. Click "Try it out"
+4. Use example payload or modify
+5. Click "Execute"
+6. Review response
+
+### Example curl test:
+```bash
+curl -X POST http://localhost:5000/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "changes": {
+      "R1": ["interface Loopback0", " ip address 10.1.1.1 255.255.255.255"],
+      "R2": ["interface Loopback0", " ip address 10.2.2.2 255.255.255.255"]
+    },
+    "intent": {
+      "reach": [{"src": "R1", "dst": "R2"}]
+    }
+  }'
+```
+
+---
+
 ## 🐛 Troubleshooting
 
 ### Batfish container not starting
@@ -213,111 +251,168 @@ docker compose up --build
 
 ---
 
-## 🧪 Testing
+# Team 3 - Batfish Validator
 
-### Test with Sample Data
-```bash
-curl -X POST http://localhost:5000/evaluate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "changes": {
-      "R1": ["interface lo0", "ip address 1.1.1.1 255.255.255.255"]
-    },
-    "intent": {
-      "reach": [{"src": "R1", "dst": "R2"}]
-    }
-  }' | python -m json.tool
-```
-
-### Integration Test via Agent
-```bash
-cd ../../langchain_agent
-python agent_service.py --query "Configure OSPF on 3 routers"
-```
+Network configuration validation using Batfish simulation.
 
 ---
 
-## 🔄 Updating Configurations
+## 🚀 Quick Start
 
-### Add New Base Config
 ```bash
-# Create new device config
-echo "hostname R4" > configs/R4.cfg
-
-# Restart validator to pick up changes
-docker compose restart validator
-```
-
-### Reset to Clean State
-```bash
-# Stop and remove volumes
-docker compose down -v
-
-# Rebuild and start
 docker compose up --build -d
+curl http://localhost:5000/health
 ```
 
 ---
 
-## 🐳 Docker Commands Reference
+## 🐛 Common Errors
 
-### Basic Operations
+### "A Batfish nodeSpec must be a string"
+
+**Error:**
+```
+Expected type: 'nodeSpec' for parameter: 'nodes'. Got error: 'A Batfish nodeSpec must be a string'
+```
+
+**Cause:**  
+The validator passed a Python list/set to Batfish, but it expects a comma-separated string.
+
+**Fix:**  
+Already applied in `validator.py` - `_run_cp()` now converts device lists to strings:
+```python
+nodes_spec = ",".join(str(d) for d in changed_devices)
+```
+
+**Verify Fix:**
 ```bash
-# Start services
+docker logs validator | grep "CP check for nodes"
+# Should show: CP check for nodes: R1,R2,R3
+```
+
+---
+
+### Base Snapshot Missing
+
+**Error:**
+```
+COPY_BASE_SNAPSHOT failed: [Errno 2] No such file or directory
+```
+
+**Fix:**
+```bash
+# Ensure base snapshot exists
+ls 03_AGENT_VALIDATION/batfish/configs/
+
+# Should contain: *.cfg files for base topology
+```
+
+---
+
+### Batfish Not Ready
+
+**Error:**
+```
+Batfish not ready after timeout
+```
+
+**Fix:**
+```bash
+# Increase timeout
+docker compose down
+# Edit docker-compose.yml: BATFISH_READY_TIMEOUT=180
 docker compose up -d
 
-# Stop services
-docker compose stop
-
-# Remove containers (keeps volumes)
-docker compose down
-
-# Remove everything including volumes
-docker compose down -v
-
-# View logs
-docker compose logs -f [service_name]
-
-# Restart a service
-docker compose restart [service_name]
-```
-
-### Development
-```bash
-# Rebuild after code changes
-docker compose up --build
-
-# Execute commands in container
-docker compose exec validator python -c "print('test')"
-
-# Access container shell
-docker compose exec validator /bin/bash
-```
-
-### Debugging
-```bash
-# Check container status
-docker compose ps
-
-# Inspect volumes
-docker volume ls
-docker volume inspect batfish_batfish-data
-
-# View resource usage
-docker stats
+# Check Batfish logs
+docker logs batfish
 ```
 
 ---
 
-## 🔗 Integration with Makefile
+## 📝 API Reference
 
-The master Makefile includes commands for this service:
+### POST /evaluate
+
+**Payload:**
+```json
+{
+  "changes": {
+    "R1": ["router ospf 1", "network 10.0.0.0 0.0.0.255 area 0"],
+    "R2": ["router ospf 1", "network 10.0.1.0 0.0.0.255 area 0"]
+  },
+  "intent": {
+    "reach": [
+      {"src": "R1", "dst": "R2"}
+    ]
+  }
+}
+```
+
+**Response (Success):**
+```json
+{
+  "result": "OK",
+  "snapshot": "snapshot-verify-abc123",
+  "summary": {
+    "CP": {"status": "PASS", "rows": 6},
+    "TP": {"status": "PASS", "edges": 3},
+    "REACH": [
+      {"src": "R1", "dst": "R2", "status": "PASS", "error": ""}
+    ]
+  }
+}
+```
+
+**Response (Error):**
+```json
+{
+  "result": "ERROR",
+  "stage": "VERIFY",
+  "error": "A Batfish nodeSpec must be a string",
+  "trace": ["..."],
+  "changed_devices": ["R1", "R2"],
+  "reach_paths": [{"src": "R1", "dst": "R2"}]
+}
+```
+
+---
+
+## 🔧 Debug Endpoints
+
+### GET /health
+```bash
+curl http://localhost:5000/health
+```
+
+### GET /debug/bf
+```bash
+curl http://localhost:5000/debug/bf
+# Shows: networks, current snapshot
+```
+
+---
+
+## 📊 Logs
 
 ```bash
-# From project root (P003-LLM/)
-make run-t3           # Start validator with Docker Compose
-make logs-t3          # View validator logs
-make stop             # Stop all services including validator
+# Validator logs
+docker logs -f validator
+
+# Batfish logs
+docker logs -f batfish
+
+# Both
+docker compose logs -f
+```
+
+---
+
+## 🧹 Reset
+
+```bash
+# Full reset (removes snapshots)
+docker compose down -v
+docker compose up --build -d
 ```
 
 ---
@@ -373,3 +468,22 @@ docker run --rm -v batfish_batfish-data:/data -v $(pwd):/backup \
 **Batfish Image:** `batfish/allinone:latest`  
 **Validator Version:** 1.0.0  
 **Last Updated:** 2025
+
+## 🚀 Running the Validator
+
+### Option 1: Direct Python
+```bash
+cd 03_AGENT_VALIDATION/batfish
+python validator.py
+```
+
+### Option 2: Uvicorn (Recommended)
+```bash
+cd 03_AGENT_VALIDATION/batfish
+python -m uvicorn validator:app --host 0.0.0.0 --port 5000 --reload
+```
+
+### Option 3: Makefile
+```bash
+make run-t3-docs  # From project root
+```

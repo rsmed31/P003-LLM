@@ -87,6 +87,46 @@ Each device object must contain:
 
 ## 🚀 Usage
 
+### Interactive Mode (Recommended)
+
+Launch the interactive CLI with real-time pipeline visualization:
+
+```bash
+# From project root (activate global venv first)
+cd 03_AGENT_VALIDATION\langchain_agent
+python interactive.py
+```
+
+**Features:**
+- 🎨 Beautiful real-time pipeline visualization
+- 📊 Step-by-step progress tracking
+- 🔄 Live configuration preview
+- 💬 Chat-like interface
+- ⚡ Fast model switching
+
+**Commands:**
+- `<query>` - Process a network configuration query
+- `model gemini` - Switch to Gemini model
+- `model llama` - Switch to Llama model
+- `status` - Show current configuration
+- `help` - Show all commands
+- `exit` / `quit` - Exit interactive mode
+
+**Example Session:**
+```
+> configure ospf on 3 routers
+```
+```bash
+# gemini model
+model gemini
+# llama model
+model llama
+# show status
+status
+# exit
+exit
+```
+
 ### Run Full Pipeline
 ```bash
 python agent_service.py --query "Configure OSPF on 3 routers" --model gemini
@@ -106,6 +146,47 @@ python agent_service.py --query "..." --skip-t1-write
 ```bash
 python agent_service.py --query "..." --model llama
 ```
+
+### Makefile Shortcut
+```bash
+# From project root
+make interactive            # Launch interactive CLI
+make T3_MODE=interactive run-t3   # Start Batfish + interactive agent
+```
+
+---
+
+## 📓 Jupyter Notebook (Interactive Testing)
+
+Test the pipeline interactively in a notebook:
+
+```bash
+# Navigate to notebooks directory
+cd 03_AGENT_VALIDATION/langchain_agent/notebooks
+
+# Start Jupyter (if not running)
+jupyter notebook
+
+# Open: pipeline_interactive.ipynb
+```
+
+**Features:**
+- Cell-by-cell execution
+- Real-time results
+- Log inspection
+- Custom query testing
+- Visual feedback
+
+**Notebook cells:**
+1. Setup & imports
+2. T1 Q&A lookup test
+3. T2 config generation test
+4. T3 validation test
+5. Full pipeline test
+6. Log viewer
+7. Custom query helper
+
+**Note:** Ensure all services are running before executing notebook cells.
 
 ---
 
@@ -155,10 +236,134 @@ Check logs for these markers:
 - `[T3]` - Validation requests
 - `[T1]` (if implemented) - Q&A and write operations
 
+### Common T3 Validation Errors
+
+**Error: "A Batfish nodeSpec must be a string"**
+- **Cause**: Device names passed as list instead of comma-separated string
+- **Fix**: Applied in validator.py `_run_cp()` - converts list to string
+- **Check**: Verify `changes` dict keys are valid device names (no special chars)
+
+**Error: "No reachable paths found"**
+- **Cause**: Devices not connected or missing IP configuration
+- **Fix**: Ensure generated config includes interface IPs and routing
+- **Debug**: Check base snapshot has proper topology
+
+**Error: "VERIFY failed"**
+- **Cause**: Batfish query exception (missing nodes, invalid syntax)
+- **Fix**: Check validator logs for detailed stack trace
+- **Debug**: Test with simpler config (single device, no intents)
+
 ### Enable Debug Logging
 Edit `config.json`:
 ```json
 {
   "LOG_LEVEL": "DEBUG"
 }
+```
+
+---
+
+## 🔐 Upstream Dependencies
+
+If T1 (QA service) is unreachable:
+- Agent skips cache lookup automatically (non-fatal)
+- Ensure: `curl http://localhost:8000/health` returns status
+- Start with: `docker compose -f 01_DATA_ASSETS/postgres_api/docker-compose.yml up -d`
+
+---
+
+## 📜 Pipeline Logging (LangChain Callbacks)
+
+The agent writes JSONL trace events to `03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log`.
+
+Enable/disable (default enabled):
+```
+LOG_EVENTS=1   # enabled
+LOG_EVENTS=0   # disabled
+LOG_DIR=custom/path  # optional
+```
+
+Events captured:
+- chain_start / chain_end
+- llm_start / llm_end / llm_error
+- t3_http_error / t3_error
+- agent_result
+
+Tail the log:
+```bash
+tail -f 03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log
+```
+
+Pretty-print last 10 events (jq):
+```bash
+jq -r '.event + " | " + .ts' 03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log | tail -n 10
+```
+
+Filter only LLM prompts:
+```bash
+grep '"event":"llm_start"' 03_AGENT_VALIDATION/langchain_agent/logs/pipeline.log | jq '.prompts'
+```
+
+To disable logging temporarily:
+```bash
+export LOG_EVENTS=0
+python agent_service.py --query "Configure OSPF..."
+```
+
+### Auto-Generation Logic (Fallback)
+
+If Team 2 does not provide interface definitions or adjacency intents:
+
+1. Synthetic interfaces are injected per device for each OSPF network:
+   - interface GigabitEthernet0/<area>
+   - ip address <network_base+1> <mask>
+   - ip ospf <area> area <area>
+
+2. Reach pairs are auto-generated between devices sharing identical 'network X W.X.Y.Z area Y' statements.
+
+Purpose: Avoid validation failures (0 edges / empty reach) when minimal OSPF configs are returned.
+
+To disable auto-generation: ensure Team 2 returns explicit interface lines and adjacency intents with:
+```json
+{
+  "type": "adjacency",
+  "endpoints": [
+    {"role": "router", "id": "R1"},
+    {"role": "router", "id": "R2"}
+  ]
+}
+```
+
+### 🔁 Intent Parsing & Fallback
+
+Supported intent types from Team 2:
+- connectivity / adjacency / reachability -> converted into reach pairs for validation
+- interface / policy / redundancy -> preserved (future validation) and passed through
+
+If Team 2 omits intents entirely:
+- Synthetic interfaces are injected from OSPF 'network' statements
+- Reach pairs auto-generated between devices sharing identical networks
+
+Disable fallback (optional) by setting `"AUTO_INTENT_FALLBACK": false` in config.json (current logic guards but defaults true).
+
+## ⚠️ Known Limitation: OSPF Validation Requires Complete Configs
+
+**Issue:** If Team 2 returns only `router ospf` stanzas without interface IPs, validation will fail (0 edges, no reachability).
+
+**Root Cause:**
+- Batfish requires interfaces with IP addresses to build topology
+- OSPF network statements must match actual interface IPs
+- Loopback-only configs (fallback) cannot form adjacencies
+
+**Workaround:**
+1. Update Team 2 prompts to generate full interface blocks
+2. Or manually add transit interfaces before validation
+3. Or skip T3 validation for incomplete configs
+
+**Example of Required Config:**
+```
+interface GigabitEthernet0/0
+ ip address 10.1.12.1 255.255.255.252
+router ospf 1
+ network 10.1.12.0 0.0.0.3 area 0
 ```

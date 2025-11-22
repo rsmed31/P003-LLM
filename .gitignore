@@ -246,11 +246,9 @@ __pycache__/
 dist/
 build/
 
-# Virtual environments
+# Virtual environment (now global at project root)
 .venv/
-venv/
-ENV/
-env/
+.venv
 
 # IDE
 .vscode/

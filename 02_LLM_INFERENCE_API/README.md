@@ -358,6 +358,33 @@ Already configured for open access. If still blocked, check browser console and 
 
 ---
 
+## 🛠 Retrieval Troubleshooting
+
+If you see:
+```
+[WARN] Failed to retrieve context ... ConnectionAbortedError(10053)
+```
+Checklist:
+1. Verify T1 container is running:
+   ```bash
+   docker ps | grep pgvector-database
+   ```
+2. Health endpoint should respond:
+   ```bash
+   curl http://localhost:8000/health
+   ```
+3. Test retrieval manually:
+   ```bash
+   curl "http://localhost:8000/chunks/query?query=OSPF&limit=5"
+   ```
+4. Heavy first-time embedding prep may delay startup; wait 1–2 minutes after `docker compose up`.
+5. Windows firewall or antivirus may abort idle connections; retry or exclude Docker.
+6. Reduce chunk count (modify retrieval_config.json default_chunks) if CPU constrained.
+
+Set RETRIEVAL_SERVICE_URL to the base (no path). The system appends /chunks/query automatically.
+
+---
+
 ## 📊 Testing
 
 ### Test via Command Line
@@ -470,3 +497,13 @@ Call `/v1/getAnswer` with query and preferred model. Response contains structure
 **Current Version:** 1.0.0  
 **Last Updated:** 2025  
 **Maintainer:** Team 2
+
+## ✅ Intent Guidance
+Include meaningful intents to improve validation:
+- connectivity (preferred for neighbor pairs: R1 ↔ R2)
+- reachability (end-to-end path expectations)
+- interface (specific interface/VLAN state)
+- policy (ACL / QoS / NAT)
+- redundancy (HSRP / STP / LAG)
+
+If omitted, downstream will auto-generate synthetic interfaces and reach pairs from shared OSPF network statements (less precise).

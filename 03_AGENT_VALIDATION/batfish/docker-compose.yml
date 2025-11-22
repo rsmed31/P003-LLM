@@ -5,19 +5,13 @@ services:
     image: batfish/allinone:latest
     container_name: batfish
     ports:
-      - "8888:8888"  # Batfish service port
       - "9997:9997"  # CoordWork port
       - "9996:9996"  # CoordWork SSL port
     volumes:
       - batfish-data:/data
     networks:
       - validation-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9996/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+    # No health check - just let it start
     restart: unless-stopped
 
   validator:
@@ -32,14 +26,13 @@ services:
       - BF_NETWORK_NAME=network-test
       - BF_SNAPSHOT_BASE=/app/configs
       - PORT=5000
-      - REACH_SRC=h1
-      - REACH_DST=h2
+      - BATFISH_READY_TIMEOUT=120
+      - BATFISH_READY_INTERVAL=3
     volumes:
       - ./configs:/app/configs:ro
       - ./validator.py:/app/validator.py:ro
     depends_on:
-      batfish:
-        condition: service_healthy
+      - batfish
     networks:
       - validation-net
     restart: unless-stopped

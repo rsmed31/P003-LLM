@@ -7,15 +7,35 @@ T3_PORT ?= 5000
 
 # API URLs (can be overridden)
 T1_URL ?= http://localhost:$(T1_PORT)
-T2_URL ?= http://localhost:$(T2_URL)
+T2_URL ?= http://localhost:$(T2_PORT)
 T3_URL ?= http://localhost:$(T3_PORT)
 
-# Python and venv paths
-PYTHON := python3
-VENV_T1 := 01_DATA_ASSETS/.venv
-VENV_T2 := 02_LLM_INFERENCE_API/.venv
-VENV_T3 := 03_AGENT_VALIDATION/langchain_agent/.venv
-VENV_T3_BATFISH := 03_AGENT_VALIDATION/batfish/.venv
+# Replace per-team venv variables with one global venv
+VENV := .venv
+PYTHON ?= python
+
+# Cross-platform venv python path + shell adaptations
+ifeq ($(OS),Windows_NT)
+	VENV_BIN := Scripts
+	VENV_PY := $(VENV)\Scripts\python.exe
+	ACTIVATE_HINT := $(VENV)\Scripts\activate
+	# Ensure we use cmd to allow Windows conditionals
+	SHELL := cmd
+	SHELLFLAGS := /C
+else
+	VENV_BIN := bin
+	VENV_PY := $(VENV)/bin/python
+	ACTIVATE_HINT := source $(VENV)/bin/activate
+endif
+
+# Cross-platform sleep helper
+ifeq ($(OS),Windows_NT)
+	SLEEP = timeout /t
+	CLEAR = cls
+else
+	SLEEP = sleep
+	CLEAR = clear
+endif
 
 # Colors for output
 RED := \033[0;31m
@@ -41,49 +61,53 @@ help: ## Show this help message
 	@echo "  make run-all              # Run all services"
 	@echo "  make T1_PORT=9000 run-t1  # Run T1 on custom port"
 
-install: install-t1 install-t2 install-t3 ## Install all project dependencies in virtual environments
+# ========== Global venv creation (fixed) ==========
+# Windows and *nix have different existence checks
+ifeq ($(OS),Windows_NT)
+install-venv: ## Create global virtual environment (Windows)
+	@echo "$(GREEN)Creating/refreshing global virtual environment...$(NC)"
+	@if not exist "$(VENV)" ($(PYTHON) -m venv $(VENV))
+	@$(VENV_PY) -m pip install --upgrade pip
+	@echo "$(GREEN)✓ Global venv ready at $(VENV) (activate: $(ACTIVATE_HINT))$(NC)"
+else
+install-venv: ## Create global virtual environment (*nix)
+	@echo "$(GREEN)Creating/refreshing global virtual environment...$(NC)"
+	@if [ ! -d "$(VENV)" ]; then \
+		$(PYTHON) -m venv $(VENV); \
+	fi
+	@$(VENV_PY) -m pip install --upgrade pip
+	@echo "$(GREEN)✓ Global venv ready at $(VENV) (activate: $(ACTIVATE_HINT))$(NC)"
+endif
 
-install-t1: ## Install Team 1 (Data/RAG) dependencies
-	@echo "$(GREEN)Installing Team 1 dependencies in virtual environment...$(NC)"
-	@cd 01_DATA_ASSETS && \
-		$(PYTHON) -m venv .venv && \
-		.venv/bin/pip install --upgrade pip && \
-		.venv/bin/pip install -r requirements.txt
-	@echo "$(GREEN)✓ Team 1 dependencies installed in $(VENV_T1)$(NC)"
+# ========== Top-level install (T1 is Docker-only) ==========
+install: install-venv install-t2 install-t3 ## Install all (T1 is Docker-only)
 
-install-t2: ## Install Team 2 (LLM Inference) dependencies
-	@echo "$(GREEN)Installing Team 2 dependencies in virtual environment...$(NC)"
-	@cd 02_LLM_INFERENCE_API && \
-		$(PYTHON) -m venv .venv && \
-		.venv/bin/pip install --upgrade pip && \
-		.venv/bin/pip install -r requirements.txt
-	@echo "$(GREEN)✓ Team 2 dependencies installed in $(VENV_T2)$(NC)"
+install-t1: ## Team 1 is Docker-only
+	@echo "$(YELLOW)Team 1 uses Docker only – skipping Python installation$(NC)"
+	@echo "$(GREEN)✓ Use: make run-t1$(NC)"
 
-install-t3: ## Install Team 3 (Agent/Validation) dependencies
-	@echo "$(GREEN)Installing Team 3 dependencies in virtual environments...$(NC)"
-	@cd 03_AGENT_VALIDATION/langchain_agent && \
-		$(PYTHON) -m venv .venv && \
-		.venv/bin/pip install --upgrade pip && \
-		.venv/bin/pip install -r requirements.txt
-	@cd 03_AGENT_VALIDATION/batfish && \
-		$(PYTHON) -m venv .venv && \
-		.venv/bin/pip install --upgrade pip && \
-		.venv/bin/pip install -r requirements.txt
+install-t2: install-venv ## Install Team 2 deps
+	@echo "$(GREEN)Installing Team 2 dependencies in global venv...$(NC)"
+	@$(VENV_PY) -m pip install -r 02_LLM_INFERENCE_API/requirements.txt
+	@echo "$(GREEN)✓ Team 2 dependencies installed$(NC)"
+
+install-t3: install-venv ## Install Team 3 deps
+	@echo "$(GREEN)Installing Team 3 dependencies in global venv...$(NC)"
+	@$(VENV_PY) -m pip install -r 03_AGENT_VALIDATION/langchain_agent/requirements.txt
+	@$(VENV_PY) -m pip install -r 03_AGENT_VALIDATION/batfish/requirements.txt
 	@echo "$(GREEN)✓ Team 3 dependencies installed$(NC)"
 
-config: ## Configure API URLs for all services
+# ========== Config (use global venv python) ==========
+config: install-venv ## Configure API URLs
 	@echo "$(BLUE)Configuring API URLs...$(NC)"
-	@echo "$(YELLOW)Team 1 URL: $(T1_URL)$(NC)"
-	@echo "$(YELLOW)Team 2 URL: $(T2_URL)$(NC)"
-	@echo "$(YELLOW)Team 3 URL: $(T3_URL)$(NC)"
-	@cd 03_AGENT_VALIDATION/langchain_agent && \
-		.venv/bin/python -c "import json; \
-		cfg = json.load(open('config.json')); \
-		cfg['T1_BASE_URL'] = '$(T1_URL)'; \
-		cfg['T2_BASE_URL'] = '$(T2_URL)'; \
-		cfg['T3_BASE_URL'] = '$(T3_URL)'; \
-		json.dump(cfg, open('config.json', 'w'), indent=2)"
-	@echo "$(GREEN)✓ Configuration updated in 03_AGENT_VALIDATION/langchain_agent/config.json$(NC)"
+	@$(VENV_PY) -c "import json,sys; \
+	p='03_AGENT_VALIDATION/langchain_agent/config.json'; \
+	cfg=json.load(open(p)); \
+	cfg['T1_BASE_URL']='$(T1_URL)'; \
+	cfg['T2_BASE_URL']='$(T2_URL)'; \
+	cfg['T3_BASE_URL']='$(T3_URL)'; \
+	json.dump(cfg,open(p,'w'),indent=2)"
+	@echo "$(GREEN)✓ Updated config.json$(NC)"
 
 config-interactive: ## Interactive configuration wizard
 	@echo "$(BLUE)=== Configuration Wizard ===$(NC)"
@@ -93,7 +117,7 @@ config-interactive: ## Interactive configuration wizard
 	read -p "GROQ API Key (optional): " groq; \
 	read -p "Gemini API Key (optional): " gemini; \
 	cd 03_AGENT_VALIDATION/langchain_agent && \
-	.venv/bin/python -c "import json; \
+	.venv/$(VENV_BIN)/python -c "import json; \
 	cfg = json.load(open('config.json')); \
 	cfg['T1_BASE_URL'] = '$${t1:-$(T1_URL)}'; \
 	cfg['T2_BASE_URL'] = '$${t2:-$(T2_URL)}'; \
@@ -106,35 +130,47 @@ config-interactive: ## Interactive configuration wizard
 	fi
 	@echo "$(GREEN)✓ Configuration complete$(NC)"
 
-run-all: ## Run all services (T1, T2, T3) in background
-	@echo "$(GREEN)Starting all services...$(NC)"
-	@make run-t1 &
-	@sleep 2
-	@make run-t2 &
-	@sleep 2
-	@make run-t3 &
-	@echo "$(GREEN)✓ All services started$(NC)"
-	@echo "$(YELLOW)Access points:$(NC)"
-	@echo "  T1 (Data/RAG):  http://localhost:$(T1_PORT)"
-	@echo "  T2 (LLM):       http://localhost:$(T2_PORT)/docs"
-	@echo "  T3 (Agent):     http://localhost:$(T3_PORT)"
+run-all: ## Run all services (sequential, abort on failure)
+	@echo "Starting all services..."
+	@$(MAKE) run-t1 || (echo "Team 1 failed; aborting."; exit 1)
+	@$(SLEEP) 2 >nul 2>&1 || true
+	@$(MAKE) run-t2 || (echo "Team 2 failed; aborting."; exit 1)
+	@$(SLEEP) 2 >nul 2>&1 || true
+	@$(MAKE) run-t3 || (echo "Team 3 failed; aborting."; exit 1)
+	@echo "All services started."
 
-run-t1: ## Run Team 1 (Data/RAG service)
-	@echo "$(GREEN)Starting Team 1 on port $(T1_PORT)...$(NC)"
-	@cd 01_DATA_ASSETS && \
-		.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port $(T1_PORT) --reload
+run-t1: ## Run Team 1 (Docker)
+ifeq ($(OS),Windows_NT)
+	@echo "Starting Team 1 (Docker)..."
+	@where docker >nul 2>&1 || (echo "ERROR: Docker is not installed. Install Docker Desktop from https://docker.com/products/docker-desktop"; exit 1)
+	@docker ps >nul 2>&1 || (echo "ERROR: Docker Desktop is not running. Please start Docker Desktop first."; exit 1)
+	@if not exist "01_DATA_ASSETS\postgres_api\docker-compose.yml" (echo "ERROR: Missing docker-compose.yml in 01_DATA_ASSETS\postgres_api"; exit 1)
+	@cd 01_DATA_ASSETS\postgres_api && docker compose up --build -d
+	@echo "Team 1 running (port $(T1_PORT))"
+else
+	@echo "Starting Team 1 (Docker)..."
+	@command -v docker >/dev/null 2>&1 || { echo "ERROR: Docker is not installed."; exit 1; }
+	@docker ps >/dev/null 2>&1 || { echo "ERROR: Docker daemon is not running."; exit 1; }
+	@[ -f 01_DATA_ASSETS/postgres_api/docker-compose.yml ] || { echo "ERROR: Missing docker-compose.yml"; exit 1; }
+	@cd 01_DATA_ASSETS/postgres_api && docker compose up --build -d
+	@echo "Team 1 running (port $(T1_PORT))"
+endif
 
-run-t1-docker: ## Run Team 1 with Docker Compose
-	@echo "$(GREEN)Starting Team 1 (PostgreSQL + API) with Docker...$(NC)"
-	@cd 01_DATA_ASSETS && docker compose up --build -d
-	@echo "$(GREEN)✓ Team 1 running in Docker$(NC)"
+run-t1-logs: ## Show Team 1 Docker logs
+	@cd 01_DATA_ASSETS/postgres_api && docker compose logs -f
 
 run-t2: ## Run Team 2 (LLM Inference API)
-	@echo "$(GREEN)Starting Team 2 on port $(T2_PORT)...$(NC)"
+	@echo "Starting Team 2 on port $(T2_PORT)..."
 	@cd 02_LLM_INFERENCE_API && \
-		.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port $(T2_PORT) --reload
+		..\$(VENV)\$(VENV_BIN)\python -m uvicorn app:app --host 0.0.0.0 --port $(T2_PORT) --reload
 
-run-t3: run-t3-batfish run-t3-agent ## Run Team 3 (Batfish + Agent)
+run-t3: ## Run Team 3 (Batfish + Agent or interactive)
+	@$(MAKE) run-t3-batfish
+ifeq ($(T3_MODE),interactive)
+	@$(MAKE) run-t3-interactive
+else
+	@$(MAKE) run-t3-agent
+endif
 
 run-t3-batfish: ## Run Team 3 Batfish validation service with Docker
 	@echo "$(GREEN)Starting Batfish validation service...$(NC)"
@@ -142,15 +178,21 @@ run-t3-batfish: ## Run Team 3 Batfish validation service with Docker
 	@echo "$(GREEN)✓ Batfish + Validator running on port 5000$(NC)"
 
 run-t3-agent: ## Run Team 3 Agent Orchestrator
-	@echo "$(GREEN)Starting Team 3 Agent on port $(T3_PORT)...$(NC)"
-	@cd 03_AGENT_VALIDATION/langchain_agent && \
-		.venv/bin/python -m uvicorn agent_service:app --host 0.0.0.0 --port $(T3_PORT) --reload
+	@echo "Starting Team 3 Agent on port $(T3_PORT)..."
+	@cd 03_AGENT_VALIDATION\langchain_agent && \
+		..\..\$(VENV)\$(VENV_BIN)\python -m uvicorn agent_service:app --host 0.0.0.0 --port $(T3_PORT) --reload
+
+run-t3-interactive: ## Run Team 3 Agent Interactive CLI
+	@echo "Starting Team 3 Agent (interactive CLI)..."
+	@cd 03_AGENT_VALIDATION\langchain_agent && ..\..\$(VENV)\$(VENV_BIN)\python interactive.py
+
+interactive: run-t3-interactive ## Shortcut for interactive CLI only
 
 stop: ## Stop all running services
 	@echo "$(RED)Stopping all services...$(NC)"
 	@pkill -f "uvicorn.*app:app" || true
 	@pkill -f "uvicorn.*agent_service:app" || true
-	@cd 01_DATA_ASSETS && docker compose down 2>/dev/null || true
+	@cd 01_DATA_ASSETS/postgres_api && docker compose down 2>/dev/null || true
 	@cd 03_AGENT_VALIDATION/batfish && docker compose down 2>/dev/null || true
 	@echo "$(GREEN)✓ All services stopped$(NC)"
 
@@ -164,25 +206,27 @@ clean-cache: ## Clean Python cache and temporary files
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 	@echo "$(GREEN)✓ Cache cleanup complete$(NC)"
 
-clean-venv: ## Remove all virtual environments
-	@echo "$(YELLOW)Removing virtual environments...$(NC)"
-	@rm -rf $(VENV_T1) $(VENV_T2) $(VENV_T3) $(VENV_T3_BATFISH) 2>/dev/null || true
-	@echo "$(GREEN)✓ Virtual environments removed$(NC)"
+clean-venv: ## Remove global venv
+	@echo "$(YELLOW)Removing global virtual environment...$(NC)"
+ifeq ($(OS),Windows_NT)
+	@if exist "$(VENV)" rmdir /S /Q "$(VENV)"
+else
+	@rm -rf "$(VENV)"
+endif
+	@echo "$(GREEN)✓ Global venv removed$(NC)"
 
 clean-t3: ## Clean Team 3 Docker volumes
 	@echo "$(YELLOW)Cleaning Team 3 Batfish volumes...$(NC)"
 	@cd 03_AGENT_VALIDATION/batfish && docker compose down -v
 	@echo "$(GREEN)✓ Team 3 cleanup complete$(NC)"
 
-test-t2-t3: ## Test Team 2 → Team 3 integration
-	@echo "$(BLUE)Testing T2 → T3 pipeline...$(NC)"
-	@cd 03_AGENT_VALIDATION/langchain_agent && \
-		.venv/bin/python agent_service.py --query "Configure OSPF on 3 routers" --model gemini
+test-t2-t3: ## Test Team 2 → Team 3 integration (global venv)
+	@echo "Testing T2 → T3 pipeline..."
+	@cd 03_AGENT_VALIDATION\langchain_agent && ..\..\$(VENV)\$(VENV_BIN)\python agent_service.py --query "Configure OSPF on 3 routers" --model gemini
 
-test-full: ## Test full pipeline (T1 → T2 → T3)
-	@echo "$(BLUE)Testing full pipeline...$(NC)"
-	@cd 03_AGENT_VALIDATION/langchain_agent && \
-		.venv/bin/python agent_service.py --query "What is OSPF?"
+test-full: ## Test full pipeline (global venv)
+	@echo "Testing full pipeline..."
+	@cd 03_AGENT_VALIDATION\langchain_agent && ..\..\$(VENV)\$(VENV_BIN)\python agent_service.py --query "What is OSPF?"
 
 health-check: ## Check if all services are running
 	@echo "$(BLUE)Checking service health...$(NC)"
@@ -192,7 +236,7 @@ health-check: ## Check if all services are running
 	@curl -s http://localhost:$(T3_PORT)/docs && echo "$(GREEN)✓ T3 Agent is running$(NC)" || echo "$(RED)✗ T3 Agent is down$(NC)"
 
 logs-t1: ## Show Team 1 logs (if running via Docker)
-	@cd 01_DATA_ASSETS && docker compose logs -f
+	@cd 01_DATA_ASSETS/postgres_api && docker compose logs -f
 
 logs-t3: ## Show Team 3 Batfish logs
 	@cd 03_AGENT_VALIDATION/batfish && docker compose logs -f
@@ -203,17 +247,15 @@ logs-t3-validator: ## Show validator service logs only
 logs-t3-batfish: ## Show batfish service logs only
 	@cd 03_AGENT_VALIDATION/batfish && docker compose logs -f batfish
 
-status: ## Show status of all services
+status: ## Show status
 	@echo "$(BLUE)=== Service Status ===$(NC)"
-	@ps aux | grep -E "uvicorn.*(app|agent_service)" | grep -v grep || echo "$(YELLOW)No services running$(NC)"
+	@ps aux | grep -E "uvicorn.*(app|agent_service)" | grep -v grep || echo "$(YELLOW)No Python services running$(NC)"
 	@echo ""
-	@echo "$(BLUE)=== Virtual Environments ===$(NC)"
-	@test -d $(VENV_T1) && echo "$(GREEN)✓ T1 venv exists$(NC)" || echo "$(RED)✗ T1 venv missing$(NC)"
-	@test -d $(VENV_T2) && echo "$(GREEN)✓ T2 venv exists$(NC)" || echo "$(RED)✗ T2 venv missing$(NC)"
-	@test -d $(VENV_T3) && echo "$(GREEN)✓ T3 venv exists$(NC)" || echo "$(RED)✗ T3 venv missing$(NC)"
+	@echo "$(BLUE)=== Virtual Environment ===$(NC)"
+	@test -d $(VENV) && echo "$(GREEN)✓ Global venv exists at ./$(VENV)$(NC)" || echo "$(RED)✗ Global venv missing$(NC)"
 	@echo ""
 	@echo "$(BLUE)=== Docker Containers ===$(NC)"
-	@cd 01_DATA_ASSETS && docker compose ps 2>/dev/null || true
+	@cd 01_DATA_ASSETS/postgres_api && docker compose ps 2>/dev/null || true
 	@cd 03_AGENT_VALIDATION/batfish && docker compose ps 2>/dev/null || true
 
 setup: install config ## Complete setup (install + configure)
@@ -230,11 +272,6 @@ quick-test: ## Quick test query through the agent
 		-d '{"query":"Configure OSPF area 0 on router R1"}' | python -m json.tool
 
 # Manual venv activation commands (for reference)
-activate-t1: ## Show command to activate Team 1 venv
-	@echo "Run: source $(VENV_T1)/bin/activate"
-
-activate-t2: ## Show command to activate Team 2 venv
-	@echo "Run: source $(VENV_T2)/bin/activate"
-
-activate-t3: ## Show command to activate Team 3 venv
-	@echo "Run: source $(VENV_T3)/bin/activate"
+activate: ## Show command to activate global venv
+	@echo "Windows: .venv\Scripts\activate"
+	@echo "Linux/Mac: source .venv/bin/activate"
