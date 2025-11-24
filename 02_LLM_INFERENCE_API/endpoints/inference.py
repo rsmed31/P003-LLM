@@ -3,6 +3,7 @@ import os
 import json
 import requests
 import datetime  # Add this import
+import re  # <-- added
 from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -126,66 +127,70 @@ def callGemini(model, prompt):
     return response.text.strip() if response and hasattr(response, "text") else ""
 
 
-def callLlama(api_link, prompt, api_key=None, model=None, stream=False):
-    """Call Llama API (Ollama, etc.) and return clean JSON."""
+def callLlama(api_link, prompt, api_key=None, model=None):
+    """Call Llama (Ollama) using /api/chat for fully non-streaming JSON output."""
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    # Switch endpoint if old /api/generate is configured
+    if api_link and "/api/generate" in api_link:
+        api_link = api_link.replace("/api/generate", "/api/chat")
     payload = {
         "model": model,
-        "prompt": prompt,
-        "stream": stream
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False  # enforce non-streaming
     }
-    response = requests.post(api_link, json=payload, headers=headers)
+    response = requests.post(api_link, json=payload, headers=headers, timeout=120)
     response.raise_for_status()
-
     data = response.json()
-
-    # Normalize keys in case model name differs or text is nested
-    model_name = data.get("model", model or "unknown_model")
-    text_output = data.get("response") or data.get("text") or data.get("output") or ""
-
-    # Clean output
-    # clean = {
-    #     "model": model_name,
-    #     "response": text_output.strip()
-    # }
-    # return json.dumps(clean, indent=2)
-    return text_output
+    return (data.get("message", {}) or {}).get("content", "").strip()
 
 def clean_model_output(text: str) -> str:
     """
-    Aggressively remove common wrappers the model adds.
-    Handles cases where model output might be fragmented or have trailing text.
+    Extract ONLY the first complete top-level JSON array from model output.
+    Discards any trailing instructional text the model may append.
+    Returns '[]' if no valid array detected.
     """
     if not text:
-        return text
+        return "[]"
+    # Remove code fences
+    t = re.sub(r"```(?:json)?", "", text).strip()
 
-    t = text.strip()
+    # Find first '['
+    start = t.find('[')
+    if start == -1:
+        return "[]"
 
-    # First, try to extract content between first '[' and last ']'
-    first_bracket = t.find('[')
-    last_bracket = t.rfind(']')
-    
-    if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
-        # Extract ONLY the JSON array portion - nothing before or after
-        json_portion = t[first_bracket:last_bracket + 1]
-        
-        # Remove any markdown code fences that might be inside
-        if '```' in json_portion:
-            json_portion = json_portion.replace('```json', '').replace('```', '')
-        
-        return json_portion.strip()
-    
-    # Fallback: try to find brackets and extract
-    if '[' in t and ']' in t:
-        start = t.find('[')
-        end = t.rfind(']')
-        if start < end:
-            return t[start:end + 1].strip()
-    
-    # Last resort: return as-is (will fail validation)
-    return t.strip()
+    depth = 0
+    in_string = False
+    escape = False
+    end = -1
+
+    for i, ch in enumerate(t[start:], start):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+
+    if end == -1 or depth != 0:
+        return "[]"
+
+    json_portion = t[start:end + 1].strip()
+    return json_portion
 
 def parse_and_validate_array(json_text: str):
     try:
@@ -415,83 +420,15 @@ def generate(
     return json.dumps({"model": model_name, "response": parsedObject}, indent=2)
 
 
-
-def run_gemini_rag_tests(test_suite_path):
-    """
-    Run Gemini + RAG on all test cases in test_suite.json.
-    Returns a list of results.
-    """
-    with open(test_suite_path, 'r', encoding='utf-8') as f:
-        test_cases = json.load(f)
-    
-    results = []
-    for test in test_cases:
-        query = test.get("query")
-        try:
-            # Call your generate function from inference.py
-            output_json = generate(query, model_name="gemini")
-            output = json.loads(output_json)
-            results.append({"query": query, "output": output})
-        except Exception as e:
-            results.append({"query": query, "error": str(e)})
-    return results
-
-def validate_with_batfish(device_name, commands, batfish_validator_path):
-    """
-    Validate configuration commands using Batfish.
-    Returns True if valid, False otherwise.
-    """
-    # Save commands to a temporary config file
-    config_file = f"temp_{device_name}.txt"
-    with open(config_file, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(commands))
-    try:
-        # Run Batfish validator script (assume it takes config file as argument)
-        # For example: python validator.py temp_R1.txt
-        import subprocess
-        result = subprocess.run(
-            ["python", batfish_validator_path, config_file],
-            capture_output=True, text=True, timeout=30
-        )
-        # Example output: "PASS" or "FAIL"
-        print(f"Batfish output for {device_name}: {result.stdout.strip()}")
-        return "PASS" in result.stdout
-    finally:
-        os.remove(config_file)
-
-
 # --- EXAMPLE USAGE ---
 
-# if __name__ == "__main__":
-#     print("\n--- Test 2: Configuration query with RAG ---")
-#     try:
-#         response = generate(
-#             query="Configure OSPF area 0 between R1 and R2 with router-ids 1.1.1.1 and 2.2.2.2 respectively.",
-#             model_name="gemini"
-#         )
-#         print(response)
-#     except Exception as e:
-#         print(f"Error: {e}")
-
-
-# Example usage:
 if __name__ == "__main__":
-    # Path to your test suite
-    test_suite_path = "test_suite.json"
-    # Path to Batfish validator script
-    batfish_validator_path = os.path.join("..", "batfish", "validator.py")
-
-    # Run Gemini + RAG tests
-    results = run_gemini_rag_tests(test_suite_path)
-    for result in results:
-        print(f"\nQuery: {result['query']}")
-        if "error" in result:
-            print(f"Error: {result['error']}")
-            continue
-        output = result["output"]["response"]  # This is a list of device dicts
-        for device in output:
-            device_name = device["device_name"]
-            commands = device["configuration_mode_commands"]
-            print(f"Validating {device_name} with Batfish...")
-            is_valid = validate_with_batfish(device_name, commands, batfish_validator_path)
-            print(f"Syntax Validity for {device_name}: {'PASS' if is_valid else 'FAIL'}")
+    print("\n--- Test 2: Configuration query with RAG ---")
+    try:
+        response = generate(
+            query="Configure OSPF area 0 between R1 and R2 with router-ids 1.1.1.1 and 2.2.2.2 respectively.",
+            model_name="llama"
+        )
+        print(response)
+    except Exception as e:
+        print(f"Error: {e}")
