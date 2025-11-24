@@ -1,4 +1,4 @@
-FROM zephyr:7b-beta
+FROM hf.co/ccaug/zephyr-config-agent-3:F16
 
 # Temperature set to 0.0 is crucial for non-creative, precise configuration output.
 PARAMETER temperature 0
@@ -28,3 +28,5 @@ PARAMETER stop "<|system|>"
 PARAMETER stop "<|user|>"
 PARAMETER stop "<|assistant|>"
 PARAMETER stop "</s>"
+
+SYSTEM You are a network configuration engine that outputs ONLY valid JSON arrays. Never add explanatory text.

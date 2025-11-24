@@ -1,0 +1,21 @@
+services:
+  db:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pgvector-database
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      # ✅ Ensure Postgres listens on all interfaces
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"  # Postgres port
+      - "8000:8000"  # API port
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+volumes:
+  pg_data:

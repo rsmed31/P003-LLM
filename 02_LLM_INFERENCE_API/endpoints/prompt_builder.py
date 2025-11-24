@@ -1,55 +1,110 @@
 import os
+import json
+from rag_logic.code_aware_filter import filter_and_refine_context
 
+# --- START MODULARITY SETUP ---
+# Dictionary to cache all prompt parts loaded from the JSON file
+PROMPT_PARTS = {}
+
+def load_prompt_parts(system_source_path: str) -> dict:
+    """
+    Load all required prompt parts from a JSON file.
+    Caches the results in PROMPT_PARTS for efficiency and future calls.
+    """
+    global PROMPT_PARTS
+    if PROMPT_PARTS:
+        return PROMPT_PARTS
+
+    if not os.path.exists(system_source_path):
+        raise FileNotFoundError(f"System instruction source not found: {system_source_path}")
+        
+    _, ext = os.path.splitext(system_source_path)
+    if ext.lower() != ".json":
+        raise ValueError("Prompt system source must be a JSON file.")
+
+    with open(system_source_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        
+    # Keys defined in the final modular prompts.json structure
+    required_keys = [
+        "SYSTEM_PROMPT", "CRITICAL_RULE_INSTRUCTION", "TASK_INSTRUCTION",
+        "SITUATION_HEADER", "CONFIG_GOAL_HEADER", "CONTEXT_BASE_HEADER",
+        "SCHEMA_HEADER", "JSON_SCHEMA_BODY"
+    ]
+    
+    # Load and strip all required parts
+    for key in required_keys:
+        if key not in data:
+             raise KeyError(f"Missing required prompt part in JSON file: {key}")
+        PROMPT_PARTS[key] = data.get(key, "").strip()
+
+    return PROMPT_PARTS
+
+
+def load_system_instructions(system_source_path: str) -> str:
+    """
+    Loads only the SYSTEM_PROMPT for API calls, using the modular loader internally.
+    """
+    parts = load_prompt_parts(system_source_path)
+    return parts['SYSTEM_PROMPT']
+
+# --- END MODULARITY SETUP ---
+
+def build_context_block(filtered_context_str: str, use_code_filter: bool = True) -> str | None:
+    """
+    Build the context block from retrieval service chunks.
+    Expects pre-separated context with CODE-AWARE and THEORETICAL sections.
+    
+    Args:
+        filtered_context_str: Pre-processed context from correlation analysis
+        use_code_filter: Whether to apply additional filtering (default: True)
+    
+    Returns:
+        Formatted context string (already separated by inference.py)
+    """
+    if not filtered_context_str or not filtered_context_str.strip():
+        return None
+    
+    # Context is already properly formatted by inference.py correlation analysis
+    # Just return it as-is, or apply minor cleanup if needed
+    return filtered_context_str.strip()
+
+
+# --- ASSEMBLY FUNCTIONS ---
 
 def assemble_rag_prompt(
     system_file_path: str,
-    factual_data_str: str,
     filtered_context_str: str,
     user_query_str: str
 ) -> str:
     """
-    Assembles the final RAG prompt following the Blueprint structure.
-    For local models with chat templates (Zephyr, Llama, etc.)
-    
-    Args:
-        system_file_path: Path to prompts_run.txt containing system instructions
-        factual_data_str: PostgreSQL factual retrieval results
-        filtered_context_str: FAISS code-aware filtered chunks
-        user_query_str: User's raw natural language query
-    
-    Returns:
-        Formatted prompt string ready for LLM inference
+    Assembles the final RAG prompt for local models (e.g., Llama/Zephyr).
     """
     
-    # Load system instructions from file
-    if not os.path.exists(system_file_path):
-        raise FileNotFoundError(f"System instruction file not found: {system_file_path}")
+    parts = load_prompt_parts(system_file_path)
+    combined_context = build_context_block(filtered_context_str, use_code_filter=True) or "No contextual data available."
     
-    with open(system_file_path, 'r', encoding='utf-8') as f:
-        system_instructions = f.read().strip()
-    
-    # Construct contextual knowledge base
-    contextual_knowledge = []
-    
-    if factual_data_str and factual_data_str.strip():
-        contextual_knowledge.append("## PostgreSQL Facts:\n" + factual_data_str.strip())
-    
-    if filtered_context_str and filtered_context_str.strip():
-        contextual_knowledge.append("## FAISS Retrieved Context:\n" + filtered_context_str.strip())
-    
-    # Combine context sections
-    combined_context = "\n\n".join(contextual_knowledge) if contextual_knowledge else "No contextual data available."
-    
-    # Assemble final prompt following chat template structure
+    # Simplified, more direct prompt structure
+    user_content = f"""{parts['CRITICAL_RULE_INSTRUCTION']}
+
+{parts['TASK_INSTRUCTION']}
+
+{parts['SITUATION_HEADER']}
+{parts['CONFIG_GOAL_HEADER']} {user_query_str}
+
+{parts['CONTEXT_BASE_HEADER']} {combined_context}
+
+{parts['SCHEMA_HEADER']}
+{parts['JSON_SCHEMA_BODY']}
+
+Remember: Output ONLY the JSON array starting with [ and ending with ]. No other text."""
+
+    # Assemble final prompt - let model generate the opening bracket naturally
     final_prompt = f"""<|system|>
-{system_instructions}
+{parts['SYSTEM_PROMPT']}
 </s>
 <|user|>
-# CONTEXTUAL KNOWLEDGE BASE:
-{combined_context}
-
-# USER COMMAND:
-{user_query_str}
+{user_content.strip()}
 </s>
 <|assistant|>
 """
@@ -59,57 +114,33 @@ def assemble_rag_prompt(
 
 def assemble_rag_prompt_gemini(
     system_file_path: str,
-    factual_data_str: str,
     filtered_context_str: str,
     user_query_str: str
 ) -> str:
     """
-    Assembles RAG prompt specifically for Gemini (no chat template tags).
-    
-    Args:
-        system_file_path: Path to prompts_run.txt containing system instructions
-        factual_data_str: PostgreSQL factual retrieval results
-        filtered_context_str: FAISS code-aware filtered chunks
-        user_query_str: User's raw natural language query
-    
-    Returns:
-        Formatted prompt string for Gemini
+    Assemble the full Gemini-style RAG prompt using modular JSON components.
     """
-    
-    # Load system instructions from file
-    if not os.path.exists(system_file_path):
-        raise FileNotFoundError(f"System instruction file not found: {system_file_path}")
-    
-    with open(system_file_path, 'r', encoding='utf-8') as f:
-        system_instructions = f.read().strip()
-    
-    # Construct contextual knowledge base
-    contextual_knowledge = []
-    
-    if factual_data_str and factual_data_str.strip():
-        contextual_knowledge.append("## PostgreSQL Facts:\n" + factual_data_str.strip())
-    
-    if filtered_context_str and filtered_context_str.strip():
-        contextual_knowledge.append("## FAISS Retrieved Context:\n" + filtered_context_str.strip())
-    
-    # Combine context sections
-    combined_context = "\n\n".join(contextual_knowledge) if contextual_knowledge else "No contextual data available."
-    
-    # Assemble prompt for Gemini (clean format without chat tags)
-    final_prompt = f"""{system_instructions}
+    parts = load_prompt_parts(system_file_path)
+    combined_context = build_context_block(
+         filtered_context_str, use_code_filter=True
+    ) or "No contextual data available."
 
----
+    # Simplified Gemini prompt
+    modular_template = f"""{parts['SYSTEM_PROMPT']}
 
-# CONTEXTUAL KNOWLEDGE BASE:
-{combined_context}
+{parts['CRITICAL_RULE_INSTRUCTION']}
 
----
+{parts['TASK_INSTRUCTION']}
 
-# USER COMMAND:
-{user_query_str}
+{parts['SITUATION_HEADER']}
+{parts['CONFIG_GOAL_HEADER']} {user_query_str.strip()}
 
----
+{parts['CONTEXT_BASE_HEADER']} {combined_context.strip()}
 
-Please provide your response below:"""
-    
-    return final_prompt
+{parts['SCHEMA_HEADER']}
+{parts['JSON_SCHEMA_BODY']}
+
+Output the JSON array now (start with [):"""
+
+    return modular_template.strip()
+

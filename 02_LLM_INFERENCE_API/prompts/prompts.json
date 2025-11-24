@@ -1,21 +1,17 @@
 {
-  "SYSTEM_PROMPT": "You are a technical automation assistant. Always return precise, executable steps and commands to solve the requested configuration task. Do not guess. Use only the provided request and context. If required details are missing, respond with 'INSUFFICIENT DATA'. Keep outputs deterministic and parseable.",
+  "SYSTEM_PROMPT": "You are a highly specialized network configuration engine. Output ONLY Cisco IOS commands in a JSON array. Enforce strict naming and syntax rules.",
+  
+  "CRITICAL_RULE_INSTRUCTION": "**CRITICAL RULE:** Response MUST start with '[' and end with ']'. ONLY the JSON array. No text outside.",
+  
+  "TASK_INSTRUCTION": "# TASK:\nGenerate COMPLETE configurations including:\n1. Physical interfaces (GigabitEthernet) with IP addresses and 'no shutdown'\n2. OSPF/BGP router process with proper network statements\n3. Transit links between routers (use /30 subnets from 10.1.0.0/16)\n4. Connectivity intents for ALL device pairs\n\nFor 3 routers (R1, R2, R3):\n- R1 Gi0/0: 10.1.12.1/30 → R2\n- R2 Gi0/0: 10.1.12.2/30 → R1, Gi0/1: 10.1.23.1/30 → R3\n- R3 Gi0/0: 10.1.23.2/30 → R2\n\nNever use Switch* names - use R1, R2, R3 for routers.",
+  
+  "SITUATION_HEADER": "# INPUT DATA:",
+  
+  "CONFIG_GOAL_HEADER": "**Goal:**",
+  
+  "CONTEXT_BASE_HEADER": "**Context:**",
 
-  "RAG_PROMPT": "Ground your output ONLY in the retrieved context.\n<RETRIEVED_CONTEXT>\n{{context}}\n</RETRIEVED_CONTEXT>\nIf sources conflict, choose the most consistent option and proceed.",
+  "SCHEMA_HEADER": "# OUTPUT FORMAT (ALL FIELDS MANDATORY):",
 
-  "COMMANDS_ONLY": "Return ONLY a fenced code block containing the exact commands to apply, with no commentary. If environment/tooling differs across components, group commands per component with clear headers as comments.",
-
-  "STEP_PLAN": "Before commands, produce a minimal numbered plan of actions (prechecks → changes → postchecks) in one short list. Each step must be testable and map 1:1 to commands. If any prerequisite is unknown, output 'INSUFFICIENT DATA'.",
-
-  "CONFIG_GENERATION": "Using the user request and the retrieved context, produce a minimal, correct configuration change set. Avoid placeholders unless explicitly provided. Ensure structure is valid.",
-
-  "SYNTAX_VALIDATION": "Lint the provided commands for syntax/ordering issues. If issues exist, output a corrected version under a single fenced code block. If no issues, return ' Syntax check passed.'",
-
-  "SELF_VALIDATION": "Given a validation error message, identify the smallest change that fixes it and output ONLY the corrected commands in a fenced code block ready to re-run.",
-
-  "RE_PROMPT": "Given a failed validation or error log, regenerate the minimal corrected command set that preserves the original intent. Output ONLY the corrected commands in a fenced code block.",
-
-  "FACTUAL_QA": "Answer succinctly using only the provided context. If incomplete, respond 'INSUFFICIENT DATA'.",
-
-  "FINAL_RULES": "Outputs must be deterministic, grounded in the given context, and parser-friendly. Never expose hidden reasoning. Prefer minimal diffs over full rewrites. When uncertain, return 'INSUFFICIENT DATA'."
+  "JSON_SCHEMA_BODY": "[\n  {\n    \"device_name\": \"R1\",\n    \"configuration_mode_commands\": [\n      \"interface GigabitEthernet0/0\",\n      \" ip address 10.1.12.1 255.255.255.252\",\n      \" no shutdown\",\n      \"router ospf 1\",\n      \" network 10.1.12.0 0.0.0.3 area 0\"\n    ],\n    \"protocol\": \"OSPF\",\n    \"intent\": [\n      {\n        \"type\": \"connectivity\",\n        \"endpoints\": [\n          {\"role\": \"router\", \"id\": \"R1\"},\n          {\"role\": \"router\", \"id\": \"R2\"}\n        ]\n      }\n    ]\n  }\n]\n\n**VALIDATION RULES:**\n- Missing \"protocol\" field = REJECTED\n- Empty configuration_mode_commands = REJECTED\n- Missing connectivity intents = VALIDATION FAILURE"
 }

@@ -1,0 +1,124 @@
+{
+  "edges": [
+    {
+      "node1": {
+        "hostname": "h1",
+        "interfaceName": "GigabitEthernet0/0"
+      },
+      "node2": {
+        "hostname": "R1",
+        "interfaceName": "GigabitEthernet0/0"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "h2",
+        "interfaceName": "GigabitEthernet0/0"
+      },
+      "node2": {
+        "hostname": "R2",
+        "interfaceName": "GigabitEthernet0/0"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R1",
+        "interfaceName": "GigabitEthernet0/1"
+      },
+      "node2": {
+        "hostname": "R2",
+        "interfaceName": "GigabitEthernet0/1"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R1",
+        "interfaceName": "GigabitEthernet0/2"
+      },
+      "node2": {
+        "hostname": "R4",
+        "interfaceName": "GigabitEthernet0/0"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R2",
+        "interfaceName": "GigabitEthernet0/0"
+      },
+      "node2": {
+        "hostname": "R4",
+        "interfaceName": "GigabitEthernet0/1"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R2",
+        "interfaceName": "GigabitEthernet0/1"
+      },
+      "node2": {
+        "hostname": "R1",
+        "interfaceName": "GigabitEthernet0/2"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R2",
+        "interfaceName": "GigabitEthernet0/2"
+      },
+      "node2": {
+        "hostname": "R3",
+        "interfaceName": "GigabitEthernet0/0"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R3",
+        "interfaceName": "GigabitEthernet0/1"
+      },
+      "node2": {
+        "hostname": "R4",
+        "interfaceName": "GigabitEthernet0/2"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R3",
+        "interfaceName": "GigabitEthernet0/2"
+      },
+      "node2": {
+        "hostname": "R2",
+        "interfaceName": "GigabitEthernet0/0"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R4",
+        "interfaceName": "GigabitEthernet0/0"
+      },
+      "node2": {
+        "hostname": "R2",
+        "interfaceName": "GigabitEthernet0/1"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R4",
+        "interfaceName": "GigabitEthernet0/1"
+      },
+      "node2": {
+        "hostname": "R3",
+        "interfaceName": "GigabitEthernet0/2"
+      }
+    },
+    {
+      "node1": {
+        "hostname": "R4",
+        "interfaceName": "GigabitEthernet0/2"
+      },
+      "node2": {
+        "hostname": "R1",
+        "interfaceName": "GigabitEthernet0/0"
+      }
+    }
+  ]
+}
