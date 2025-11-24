@@ -415,15 +415,83 @@ def generate(
     return json.dumps({"model": model_name, "response": parsedObject}, indent=2)
 
 
+
+def run_gemini_rag_tests(test_suite_path):
+    """
+    Run Gemini + RAG on all test cases in test_suite.json.
+    Returns a list of results.
+    """
+    with open(test_suite_path, 'r', encoding='utf-8') as f:
+        test_cases = json.load(f)
+    
+    results = []
+    for test in test_cases:
+        query = test.get("query")
+        try:
+            # Call your generate function from inference.py
+            output_json = generate(query, model_name="gemini")
+            output = json.loads(output_json)
+            results.append({"query": query, "output": output})
+        except Exception as e:
+            results.append({"query": query, "error": str(e)})
+    return results
+
+def validate_with_batfish(device_name, commands, batfish_validator_path):
+    """
+    Validate configuration commands using Batfish.
+    Returns True if valid, False otherwise.
+    """
+    # Save commands to a temporary config file
+    config_file = f"temp_{device_name}.txt"
+    with open(config_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(commands))
+    try:
+        # Run Batfish validator script (assume it takes config file as argument)
+        # For example: python validator.py temp_R1.txt
+        import subprocess
+        result = subprocess.run(
+            ["python", batfish_validator_path, config_file],
+            capture_output=True, text=True, timeout=30
+        )
+        # Example output: "PASS" or "FAIL"
+        print(f"Batfish output for {device_name}: {result.stdout.strip()}")
+        return "PASS" in result.stdout
+    finally:
+        os.remove(config_file)
+
+
 # --- EXAMPLE USAGE ---
 
+# if __name__ == "__main__":
+#     print("\n--- Test 2: Configuration query with RAG ---")
+#     try:
+#         response = generate(
+#             query="Configure OSPF area 0 between R1 and R2 with router-ids 1.1.1.1 and 2.2.2.2 respectively.",
+#             model_name="gemini"
+#         )
+#         print(response)
+#     except Exception as e:
+#         print(f"Error: {e}")
+
+
+# Example usage:
 if __name__ == "__main__":
-    print("\n--- Test 2: Configuration query with RAG ---")
-    try:
-        response = generate(
-            query="Configure OSPF area 0 between R1 and R2 with router-ids 1.1.1.1 and 2.2.2.2 respectively.",
-            model_name="llama"
-        )
-        print(response)
-    except Exception as e:
-        print(f"Error: {e}")
+    # Path to your test suite
+    test_suite_path = "test_suite.json"
+    # Path to Batfish validator script
+    batfish_validator_path = os.path.join("..", "batfish", "validator.py")
+
+    # Run Gemini + RAG tests
+    results = run_gemini_rag_tests(test_suite_path)
+    for result in results:
+        print(f"\nQuery: {result['query']}")
+        if "error" in result:
+            print(f"Error: {result['error']}")
+            continue
+        output = result["output"]["response"]  # This is a list of device dicts
+        for device in output:
+            device_name = device["device_name"]
+            commands = device["configuration_mode_commands"]
+            print(f"Validating {device_name} with Batfish...")
+            is_valid = validate_with_batfish(device_name, commands, batfish_validator_path)
+            print(f"Syntax Validity for {device_name}: {'PASS' if is_valid else 'FAIL'}")
