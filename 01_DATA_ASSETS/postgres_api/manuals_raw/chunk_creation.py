@@ -75,7 +75,7 @@ def process_directory_json(input_dir,
 
         out.write("\n]\n")
 
-    print(f"✅ Done! {total_chunks} Chunks saved in {output_file}")
+    print(f"Done! {total_chunks} Chunks saved in {output_file}")
 # Main
 if __name__ == "__main__":
     input_dir = "./manuals_raw/docs/"
