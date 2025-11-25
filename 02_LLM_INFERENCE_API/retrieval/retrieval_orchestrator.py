@@ -1,12 +1,23 @@
 """
 Enhanced TF-IDF retrieval with intelligent code-aware and theoretical chunk combination.
 Provides confidence scoring based on chunk correlation and relevance.
+Integrates with RetrievalStrategy for deterministic, configurable chunk selection.
 """
 
 from typing import Dict, Optional, List, Tuple
 import math
 import re
 from collections import Counter
+import sys
+import os
+
+# Import retrieval strategy
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+try:
+    from rag_logic.retrieval_strategy import RetrievalStrategy, RetrievalPlan
+except ImportError:
+    RetrievalStrategy = None
+    RetrievalPlan = None
 
 class RetrievalOrchestrator:
     """
@@ -32,6 +43,9 @@ class RetrievalOrchestrator:
             r'\bno\s+shutdown\b', r'\bexit\b', r'\bconfigure\s+terminal\b'
         ]
         self._cli_regex = re.compile('|'.join(self._cli_patterns), re.IGNORECASE)
+        
+        # Initialize retrieval strategy
+        self._strategy = RetrievalStrategy() if RetrievalStrategy else None
 
     # ---------------------
     # Public API
@@ -56,7 +70,7 @@ class RetrievalOrchestrator:
 
     def retrieve_chunks(self, query: str, k: int = 5) -> List[Dict]:
         """
-        Return top-k chunks with intelligent code/theory combination.
+        Return top-k chunks with intelligent code/theory combination using RetrievalStrategy.
         Returns: [{ chunk, score, type, confidence }]
         """
         if not query or not self._chunks:
@@ -73,18 +87,42 @@ class RetrievalOrchestrator:
         
         scored.sort(key=lambda x: x[0], reverse=True)
         
-        # Intelligent selection: balance code and theory chunks
-        selected = self._select_balanced_chunks(scored, k)
-        
-        # Calculate confidence scores based on correlation
-        results = self._calculate_confidence(selected, query)
-        
-        return results
+        # Use retrieval strategy for selection if available
+        if self._strategy:
+            plan = self._strategy.get_plan_for_query(query, k)
+            selection_result = self._strategy.select_chunks(scored, plan, query)
+            
+            # Convert strategy output to legacy format
+            results = []
+            for chunk_data in selection_result["code_chunks"]:
+                results.append({
+                    "chunk": chunk_data["text"],
+                    "score": chunk_data["score"],
+                    "type": "code",
+                    "confidence": min(chunk_data["score"] * 1.2, 1.0),
+                    "cli_density": chunk_data.get("cli_density", 0.0)
+                })
+            for chunk_data in selection_result["theory_chunks"]:
+                results.append({
+                    "chunk": chunk_data["text"],
+                    "score": chunk_data["score"],
+                    "type": "theory",
+                    "confidence": min(chunk_data["score"] * 1.1, 1.0)
+                })
+            
+            # Sort by score for consistency
+            results.sort(key=lambda x: x["score"], reverse=True)
+            return results
+        else:
+            # Fallback to legacy selection
+            selected = self._select_balanced_chunks(scored, k)
+            results = self._calculate_confidence(selected, query)
+            return results
 
     def retrieve_with_correlation(self, query: str, k: int = 5) -> Dict:
         """
-        Advanced retrieval with correlation analysis between code and theory chunks.
-        Returns structured output with confidence metrics.
+        Advanced retrieval with correlation analysis and strategy-based selection.
+        Returns structured output with confidence metrics and quality scoring.
         """
         results = self.retrieve_chunks(query, k)
         
@@ -97,7 +135,17 @@ class RetrievalOrchestrator:
         
         # Determine overall confidence
         avg_confidence = sum(r["confidence"] for r in results) / len(results) if results else 0.0
-        overall_confidence = (avg_confidence + correlation_score) / 2
+        
+        # Calculate context quality using strategy (if available)
+        if self._strategy and results:
+            # Build mock scored chunks for quality calculation
+            code_scored = [(c["score"], {"text": c["chunk"], "type": "code"}) for c in code_chunks]
+            theory_scored = [(t["score"], {"text": t["chunk"], "type": "theory"}) for t in theory_chunks]
+            quality_score = self._strategy._calculate_quality_score(code_scored, theory_scored, query)
+        else:
+            quality_score = (avg_confidence + correlation_score) / 2
+        
+        overall_confidence = quality_score
         
         return {
             "query": query,
@@ -106,6 +154,7 @@ class RetrievalOrchestrator:
             "theory_chunks": len(theory_chunks),
             "correlation_score": round(correlation_score, 4),
             "overall_confidence": round(overall_confidence, 4),
+            "context_quality_score": round(quality_score, 4),
             "chunks": results
         }
 

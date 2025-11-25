@@ -8,7 +8,6 @@
   "T3_ENDPOINT_VALIDATE": "/evaluate",
   "HTTP_TIMEOUT": 90,
   "LOG_LEVEL": "INFO",
-  "GROQ_API_KEY": "YOUR_GROQ_API",
   "GROQ_MODEL": "llama-3.3-70b-versatile",
   "T2_DEFAULT_MODEL": "gemini",
   "INTENT_TYPES_SUPPORTED": [

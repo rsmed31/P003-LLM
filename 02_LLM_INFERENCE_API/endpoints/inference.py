@@ -233,6 +233,23 @@ try:
 except Exception:
     _LOCAL_ORCHESTRATOR = None
 
+# Import retrieval strategy and code filter
+try:
+    import sys
+    import os
+    rag_logic_path = os.path.join(os.path.dirname(__file__), '..', 'rag_logic')
+    if rag_logic_path not in sys.path:
+        sys.path.append(rag_logic_path)
+    from retrieval_strategy import RetrievalStrategy
+    from code_aware_filter import filter_and_refine_context, extract_cli_heavy_chunks, refine_code_chunks
+    _RETRIEVAL_STRATEGY = RetrievalStrategy()
+except Exception as e:
+    print(f"[WARN] Could not load retrieval strategy: {e}")
+    _RETRIEVAL_STRATEGY = None
+    filter_and_refine_context = None
+    extract_cli_heavy_chunks = None
+    refine_code_chunks = None
+
 # NOTE (#file:prompts.json): If prompts.json load fails we silently continue without system instructions.
 def safe_load_prompts(path: str) -> dict:
     try:
@@ -279,8 +296,13 @@ def save_context_to_file(query: str, chunks: list, built_context: str, model_nam
                 for i, chunk in enumerate(chunks)
             ],
             "built_context": built_context,
-            "context_length": len(built_context)
+            "context_length": len(built_context),
+            "retrieval_plan": getattr(save_context_to_file, '_last_plan', {})
         }
+        
+        # Clear the plan for next call
+        if hasattr(save_context_to_file, '_last_plan'):
+            delattr(save_context_to_file, '_last_plan')
         
         # Append to history (keep last 50 entries)
         data["history"].append(entry)
@@ -350,34 +372,82 @@ def generate(
                     
                     print(f"[INFO] Retrieved {len(chunks)} chunks from service (limit: {chunk_count})")
                     
-                    if model_name == "llama":
-                        filtered_context = "\n---\n".join(chunks) if chunks else ""
-                    else:
-                        if chunks and _LOCAL_ORCHESTRATOR:
-                            _LOCAL_ORCHESTRATOR.add_chunks(chunks)
-                            correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, len(chunks))
-                            
-                            code_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
-                            theory_chunks = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
-                            
-                            context_parts = []
-                            if code_chunks:
-                                context_parts.append("## CODE-AWARE CONTEXT:\n" + "\n---\n".join(code_chunks))
-                            if theory_chunks:
-                                context_parts.append("## THEORETICAL CONTEXT:\n" + "\n---\n".join(theory_chunks))
-                            
-
-                            filtered_context = "\n\n".join(context_parts) if context_parts else ""
-                            
-                            print(f"[INFO] Correlation Score: {correlation_result.get('correlation_score', 'N/A')}")
-                            print(f"[INFO] Overall Confidence: {correlation_result.get('overall_confidence', 'N/A')}")
-                            print(f"[INFO] Code chunks: {len(code_chunks)}, Theory chunks: {len(theory_chunks)}")
+                    # NEW: Strategy-based processing with structured context
+                    if chunks and _LOCAL_ORCHESTRATOR and _RETRIEVAL_STRATEGY:
+                        # Add chunks to orchestrator
+                        _LOCAL_ORCHESTRATOR.add_chunks(chunks)
+                        
+                        # Get retrieval plan for this query
+                        plan = _RETRIEVAL_STRATEGY.get_plan_for_query(query, len(chunks))
+                        print(f"[INFO] Retrieval Plan: {plan.total_chunks} chunks (code: {plan.target_code_chunks}, theory: {plan.target_theory_chunks})")
+                        
+                        # Retrieve with correlation
+                        correlation_result = _LOCAL_ORCHESTRATOR.retrieve_with_correlation(query, plan.total_chunks)
+                        
+                        # Separate code and theory chunks
+                        code_chunks_raw = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "code"]
+                        theory_chunks_raw = [c["chunk"] for c in correlation_result["chunks"] if c["type"] == "theory"]
+                        
+                        # Apply code-aware filtering to code chunks
+                        if filter_and_refine_context and code_chunks_raw:
+                            code_refined = filter_and_refine_context(code_chunks_raw, aggressive=False)
+                            if code_refined:
+                                code_chunks = [code_refined]
+                            else:
+                                code_chunks = code_chunks_raw
                         else:
-                            filtered_context = "\n---\n".join(chunks) if chunks else ""
+                            code_chunks = code_chunks_raw
+                        
+                        theory_chunks = theory_chunks_raw
+                        
+                        # Build structured context
+                        context_parts = []
+                        
+                        if code_chunks:
+                            code_header = "## CODE CONTEXT"
+                            code_body = "\n\n---\n\n".join(code_chunks)
+                            context_parts.append(f"{code_header}\n\n{code_body}")
+                        
+                        if theory_chunks:
+                            theory_header = "## THEORY CONTEXT"
+                            theory_body = "\n\n---\n\n".join(theory_chunks)
+                            context_parts.append(f"{theory_header}\n\n{theory_body}")
+                        
+                        filtered_context = "\n\n".join(context_parts) if context_parts else ""
+                        
+                        # Log metrics
+                        print(f"[INFO] ═══ RAG METRICS ═══")
+                        print(f"[INFO] Correlation Score: {correlation_result.get('correlation_score', 'N/A')}")
+                        print(f"[INFO] Context Quality: {correlation_result.get('context_quality_score', 'N/A')}")
+                        print(f"[INFO] Overall Confidence: {correlation_result.get('overall_confidence', 'N/A')}")
+                        print(f"[INFO] Code chunks: {len(code_chunks)}, Theory chunks: {len(theory_chunks)}")
+                        print(f"[INFO] Target code/theory: {plan.target_code_chunks}/{plan.target_theory_chunks}")
+                        print(f"[INFO] ═══════════════════")
+                        
+                        # Store plan metadata for context.json
+                        save_context_to_file._last_plan = {
+                            "total_chunks": plan.total_chunks,
+                            "code_chunks": len(code_chunks),
+                            "theory_chunks": len(theory_chunks),
+                            "target_code": plan.target_code_chunks,
+                            "target_theory": plan.target_theory_chunks,
+                            "code_ratio": plan.code_ratio,
+                            "theory_ratio": plan.theory_ratio,
+                            "correlation_score": correlation_result.get('correlation_score'),
+                            "quality_score": correlation_result.get('context_quality_score'),
+                            "confidence": correlation_result.get('overall_confidence')
+                        }
+                    elif chunks:
+                        # Fallback: simple concatenation
+                        filtered_context = "\n\n---\n\n".join(chunks)
+                    else:
+                        filtered_context = ""
                 else:
                     print(f"[WARN] No matching chunks found for query")
         except Exception as e:
             print(f"[WARN] Error processing retrieval: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Force no context if loopback
     if loopback:

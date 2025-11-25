@@ -3,7 +3,7 @@
         "model": "gemini-2.0-flash",
         "api_key_env": "GEMINI_API_KEY",
         "supports_rag": true,
-        "max_chunks": 50
+        "max_chunks": 20
     },
     "llama": {
         "model": "zephyr_configurator",
@@ -12,6 +12,6 @@
         "supports_rag": true,
         "context_param": true,
         "stream": false,
-        "max_chunks": 3
+        "max_chunks": 10
     }
 }
