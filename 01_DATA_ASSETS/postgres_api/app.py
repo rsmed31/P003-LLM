@@ -2,6 +2,7 @@
 import logging
 from typing import Optional
 from contextlib import asynccontextmanager
+import time
 
 from fastapi import FastAPI, HTTPException, Query, Path, status
 from fastapi.responses import JSONResponse
@@ -35,19 +36,22 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup and shutdown events."""
-    # Startup
+    """Lifespan context manager for startup and shutdown events with DB retry."""
     logger.info("Starting up Postgres QA API...")
-    try:
-        DatabasePool.initialize(minconn=2, maxconn=10)
-        logger.info("Database pool initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize database pool: {e}")
-        raise
-    
+    # Retry DB initialization to avoid race with postgres start
+    max_attempts = 15
+    for attempt in range(1, max_attempts + 1):
+        try:
+            DatabasePool.initialize(minconn=2, maxconn=10)
+            logger.info("Database pool ready")
+            break
+        except Exception as e:
+            logger.warning(f"DB pool init failed (attempt {attempt}/{max_attempts}): {e}")
+            if attempt == max_attempts:
+                logger.error("Exhausted DB init retries, aborting startup")
+                raise
+            time.sleep(2)
     yield
-    
-    # Shutdown
     logger.info("Shutting down Postgres QA API...")
     DatabasePool.close_all()
     logger.info("Database pool closed")
@@ -69,6 +73,16 @@ async def root():
         "service": "Postgres QA API",
         "version": "1.0.0"
     }
+
+
+@app.get("/health", tags=["Health"])
+async def health():
+    """
+    Health check endpoint.
+    
+    Returns the service status and basic information.
+    """
+    return {"status": "up", "service": "Postgres QA API"}
 
 
 @app.get(

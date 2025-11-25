@@ -1,11 +1,19 @@
 # Postgres
 
-Start: sudo docker compose up --build
-Stop:  sudo docker compose down -v
+Start: docker compose up --build  
+Stop:  docker compose down -v
 
-## Note on SQL changes
+Volume layout (pg 18+): mount /var/lib/postgresql (not /var/lib/postgresql/data).
 
-Once the database is initialized, PostgreSQL stores the data in volumes. If you make changes to the SQL init files, they won’t be applied automatically on the next start.
+Reset & rebuild if schema or init scripts change:
+```
+docker compose down -v
+docker compose up --build
+```
 
-To apply updated SQL changes, you must reset the volumes:
-with sudo docker compose down -v
+If init script error “cannot execute: required file not found”: ensure LF endings & executable:
+```
+git config core.autocrlf false
+sed -i 's/\r$//' 01_DATA_ASSETS/postgres_api/02-init.sh
+chmod +x 01_DATA_ASSETS/postgres_api/02-init.sh
+```

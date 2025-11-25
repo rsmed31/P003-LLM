@@ -7,6 +7,7 @@ from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from config import settings
 from sentence_transformers import SentenceTransformer
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,12 @@ class DatabasePool:
     _pool: Optional[pool.SimpleConnectionPool] = None
     
     @classmethod
-    def initialize(cls, minconn: int = 1, maxconn: int = 10):
-        """Initialize the connection pool."""
-        if cls._pool is None:
+    def initialize(cls, minconn: int = 1, maxconn: int = 10, retries: int = 20, delay: float = 1.5):
+        """Initialize the connection pool with retry logic."""
+        if cls._pool is not None:
+            return
+        last_err = None
+        for attempt in range(1, retries + 1):
             try:
                 cls._pool = psycopg2.pool.SimpleConnectionPool(
                     minconn,
@@ -30,10 +34,14 @@ class DatabasePool:
                     user=settings.DB_USER,
                     password=settings.DB_PASSWORD
                 )
-                logger.info("Database connection pool initialized")
+                logger.info(f"Database connection pool initialized (attempt {attempt})")
+                return
             except Exception as e:
-                logger.error(f"Failed to initialize database pool: {e}")
-                raise
+                last_err = e
+                logger.warning(f"DB init attempt {attempt} failed: {e}")
+                time.sleep(delay)
+        logger.error(f"Failed to initialize database pool after {retries} attempts: {last_err}")
+        raise last_err
     
     @classmethod
     def get_connection(cls):

@@ -9,13 +9,26 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
-      # ✅ Ensure Postgres listens on all interfaces
-      POSTGRES_HOST_AUTH_METHOD: trust
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      # App-side DB config (used by config.py)
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
     ports:
-      - "5432:5432"  # Postgres port
-      - "8000:8000"  # API port
+      - "5432:5432"
+      - "8000:8000"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql
+    command: [ "bash", "/db/start.sh" ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1 -d postgres || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 50s
 
 volumes:
   pg_data:

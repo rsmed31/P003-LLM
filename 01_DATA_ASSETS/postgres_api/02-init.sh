@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "Running database initialization (init.sh)..."
 
@@ -11,3 +11,11 @@ done
 
 echo "Running qa_prefill.py..."
 python3 /db/qa_prefill.py || echo "⚠️ Prefill script failed, continuing..."
+
+echo "[02-init.sh] Post-init script running"
+
+# Example: ensure extensions (already in 01-init.sql) – safe rechecks
+psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+echo "[02-init.sh] Completed"
