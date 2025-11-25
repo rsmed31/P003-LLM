@@ -203,6 +203,465 @@
           }
         ]
       }
+    },
+    {
+      "id": "SEC-8021X-006",
+      "query": "On switch SW1, configure 802.1X port-based authentication on interface FastEthernet0/5. Use a local username 'localuser' with password 'cisco' for authentication, and set the interface to be in a closed state until authentication succeeds.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW1",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "username localuser secret cisco",
+              "aaa authentication dot1x default local",
+              "dot1x system-auth-control",
+              "interface FastEthernet0/5",
+              " switchport mode access",
+              " authentication port-control auto",
+              " dot1x pae authenticator"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X",
+                "description": "Require 802.1X authentication on access port using local database.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "FastEthernet0/5"
+                  },
+                  {
+                    "role": "local_user_database",
+                    "id": "localuser"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-007",
+      "query": "On switch SW2, configure multi-domain authentication on interface GigabitEthernet1/0/1 to allow a voice VLAN 10 and a data VLAN 30 to coexist, with 802.1X for data and MAC Authentication Bypass (MAB) for the voice IP phone. The voice VLAN 10 and data VLAN 30 already exist. Use RADIUS server 10.0.0.10 and a key of 'voiceKEY' for voice traffic and 'dataKEY' for data traffic.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW2",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "aaa authentication dot1x default group radius",
+              "aaa authentication mab default group radius",
+              "radius server RADIUS_VOICE",
+              " address ipv4 10.0.0.10 auth-port 1812 acct-port 1813",
+              " key voiceKEY",
+              "radius server RADIUS_DATA",
+              " address ipv4 10.0.0.10 auth-port 1812 acct-port 1813",
+              " key dataKEY",
+              "dot1x system-auth-control",
+              "interface GigabitEthernet1/0/1",
+              " switchport mode access",
+              " switchport access vlan 30",
+              " switchport voice vlan 10",
+              " authentication port-control auto",
+              " authentication order mab dot1x",
+              " authentication priority mab dot1x",
+              " mab",
+              " dot1x pae authenticator"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "multi-domain_authentication",
+                "description": "Configure multi-domain authentication on an access port, prioritizing MAB (for voice) then 802.1X (for data), using RADIUS servers for both domains.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet1/0/1"
+                  },
+                  {
+                    "role": "radius_server",
+                    "id": "10.0.0.10"
+                  },
+                  {
+                    "role": "data_vlan",
+                    "id": "30"
+                  },
+                  {
+                    "role": "voice_vlan",
+                    "id": "10"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-008",
+      "query": "On switch SW3, configure interface GigabitEthernet0/1 to use an **open** authentication mode. If 802.1X authentication fails, the host should still be granted access, but placed into the **critical** VLAN 99. Use RADIUS server 10.0.0.15 for authentication.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW3",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "aaa authentication dot1x default group radius",
+              "radius server RADIUS_CRIT",
+              " address ipv4 10.0.0.15 auth-port 1812 acct-port 1813",
+              " key secretKEY",
+              "dot1x system-auth-control",
+              "vlan 99",
+              " name CRITICAL_AUTH_FAIL",
+              "interface GigabitEthernet0/1",
+              " switchport mode access",
+              " authentication port-control auto",
+              " authentication event critical action authorize",
+              " authentication event critical vlan 99",
+              " dot1x pae authenticator"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X_critical_vlan",
+                "description": "Configure 802.1X with critical authentication/failure VLAN.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet0/1"
+                  },
+                  {
+                    "role": "critical_vlan",
+                    "id": "99"
+                  },
+                  {
+                    "role": "radius_server",
+                    "id": "10.0.0.15"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-009",
+      "query": "On switch SW4, configure 802.1X on interface GigabitEthernet1/0/5 to allow only **one** host (single host mode) to be authenticated, and once authenticated, all traffic from that host's MAC address is allowed.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW4",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "aaa authentication dot1x default group radius",
+              "dot1x system-auth-control",
+              "interface GigabitEthernet1/0/5",
+              " switchport mode access",
+              " authentication port-control auto",
+              " authentication host-mode single-host",
+              " dot1x pae authenticator"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X_host_mode",
+                "description": "Configure 802.1X in single-host mode.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet1/0/5"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-010",
+      "query": "On switch SW5, configure 802.1X on interface FastEthernet0/15 to enable **multi-auth** mode, allowing multiple hosts to authenticate individually on the same port, and set the interface to **close** if a violation occurs.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW5",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "aaa authentication dot1x default group radius",
+              "dot1x system-auth-control",
+              "interface FastEthernet0/15",
+              " switchport mode access",
+              " authentication port-control auto",
+              " authentication host-mode multi-auth",
+              " authentication violation restrict",
+              " dot1x pae authenticator"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X_multi_auth",
+                "description": "Configure 802.1X in multi-auth host mode with violation restrict action.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "FastEthernet0/15"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-011",
+      "query": "On switch SW6, configure a global RADIUS server group named 'AUTH_SERVERS' to include servers 192.168.1.10 and 192.168.1.11, with a key of 'shared_secret' for all servers.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW6",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "radius server RAD10",
+              " address ipv4 192.168.1.10 auth-port 1812 acct-port 1813",
+              " key shared_secret",
+              "radius server RAD11",
+              " address ipv4 192.168.1.11 auth-port 1812 acct-port 1813",
+              " key shared_secret",
+              "aaa group server radius AUTH_SERVERS",
+              " server name RAD10",
+              " server name RAD11",
+              "aaa authentication dot1x default group AUTH_SERVERS"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "aaa_radius_group",
+                "method": "RADIUS_Server_Group",
+                "description": "Configure a RADIUS server group for AAA services.",
+                "endpoints": [
+                  {
+                    "role": "radius_server",
+                    "id": "192.168.1.10"
+                  },
+                  {
+                    "role": "radius_server",
+                    "id": "192.168.1.11"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-012",
+      "query": "On switch SW7, configure 802.1X on interface GigabitEthernet0/8 with a **re-authentication** period of 1800 seconds and set the **timeout** for supplicant response to 10 seconds.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW7",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "dot1x system-auth-control",
+              "interface GigabitEthernet0/8",
+              " switchport mode access",
+              " authentication port-control auto",
+              " dot1x pae authenticator",
+              " dot1x timeout reauth-period 1800",
+              " dot1x timeout supp-timeout 10"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X_timers",
+                "description": "Adjust 802.1X re-authentication and supplicant response timers.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet0/8"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-013",
+      "query": "On switch SW8, globally enable MAC Authentication Bypass (MAB) and configure the device to fall back to MAB if 802.1X fails, using a local database for MAB authentication.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW8",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "aaa authentication dot1x default local",
+              "aaa authentication mab default local",
+              "dot1x system-auth-control",
+              "mab enable",
+              "interface range GigabitEthernet0/1 - 24",
+              " authentication port-control auto",
+              " authentication order dot1x mab",
+              " authentication priority dot1x mab"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "MAB_global_enable",
+                "description": "Globally enable MAB and set MAB as fallback authentication method.",
+                "endpoints": []
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-014",
+      "query": "On switch SW9, configure interface GigabitEthernet0/10 to bypass 802.1X and immediately authorize any connected client if no EAP traffic is detected after 5 seconds.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW9",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "dot1x system-auth-control",
+              "interface GigabitEthernet0/10",
+              " switchport mode access",
+              " authentication port-control auto",
+              " dot1x pae authenticator",
+              " authentication timer inactivity 5"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X_no_eap_bypass",
+                "description": "Configure 802.1X to authorize the port if no EAP traffic is detected within a specified timeout.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet0/10"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-015",
+      "query": "On router R2, configure Web Authentication (WebAuth) as a fallback mechanism on interface GigabitEthernet0/0. If 802.1X fails, the client should be redirected to a web portal.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R2",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "ip http server",
+              "ip http secure-server",
+              "aaa authentication dot1x default group radius",
+              "aaa authorization network default group radius",
+              "dot1x system-auth-control",
+              "interface GigabitEthernet0/0",
+              " ip address 10.1.1.1 255.255.255.0",
+              " authentication port-control auto",
+              " authentication order dot1x webauth",
+              " authentication priority dot1x webauth",
+              " dot1x pae authenticator"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "WebAuth_fallback",
+                "description": "Configure Web Authentication as a fallback if 802.1X fails.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet0/0"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-016",
+      "query": "On switch SW10, configure 802.1X to use **multi-domain** mode on port GigabitEthernet0/20, and apply an Authorization Profile named 'VOICE_PROFILE' specifically for the voice domain.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW10",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "dot1x system-auth-control",
+              "interface GigabitEthernet0/20",
+              " switchport mode access",
+              " authentication port-control auto",
+              " authentication host-mode multi-domain",
+              " authentication open",
+              " dot1x pae authenticator",
+              " authentication control-direction in",
+              " authentication template VOICE_PROFILE domain voice"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X_multi_domain",
+                "description": "Configure 802.1X in multi-domain mode and apply an authorization template to the voice domain.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet0/20"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-017",
+      "query": "On switch SW11, globally disable the exchange of EAPOL (EAP over LAN) messages when 802.1X is enabled on any port.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "SW11",
+            "configuration_mode_commands": [
+              "dot1x system-auth-control",
+              "no dot1x enable"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X_global_disable",
+                "description": "Globally disable 802.1X EAPOL transmission.",
+                "endpoints": []
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }
