@@ -6,7 +6,7 @@
   "T1_ENDPOINT_WRITE": "/qa",
   "T2_ENDPOINT_GENERATE": "/v1/getAnswer",
   "T3_ENDPOINT_VALIDATE": "/evaluate",
-  "HTTP_TIMEOUT": 90,
+  "HTTP_TIMEOUT": 900,
   "LOG_LEVEL": "INFO",
   "GROQ_MODEL": "llama-3.3-70b-versatile",
   "T2_DEFAULT_MODEL": "gemini",

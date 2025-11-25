@@ -561,27 +561,17 @@ def _structure_final_from_t1_verified(x: Dict[str, Any], verdict_text: str, vali
 def _parse_verdict_status(verdict_text: str) -> str:
     """
     Extract PASS/FAIL status from LLM verdict text.
-    Returns 'PASS' or 'FAIL' based on the FIRST word of the verdict.
+    Returns 'PASS' or 'FAIL' based on keywords in the text.
     """
     if not isinstance(verdict_text, str):
         return "FAIL"
-    
-    # Get the first word/line of the verdict text (most reliable indicator)
-    first_line = verdict_text.strip().split('\n')[0].strip().upper()
-    first_word = first_line.split()[0] if first_line else ""
-    
-    # Check first word explicitly
-    if first_word == "PASS":
+    text_lower = verdict_text.lower()
+    # Check for pass indicators
+    if any(keyword in text_lower for keyword in ["pass", "right", "correct", "valid", "success"]):
         return "PASS"
-    elif first_word == "FAIL":
+    # Check for fail indicators
+    if any(keyword in text_lower for keyword in ["fail", "wrong", "incorrect", "invalid", "error"]):
         return "FAIL"
-    
-    # Fallback: check if first line starts with these keywords
-    if first_line.startswith("PASS"):
-        return "PASS"
-    elif first_line.startswith("FAIL"):
-        return "FAIL"
-    
     # Default to FAIL if unclear
     return "FAIL"
 

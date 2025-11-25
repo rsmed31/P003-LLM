@@ -1,0 +1,177 @@
+test_id,query,model,rag_enabled,loopback_enabled,loopback_attempted,exact_match,commands_precision,commands_recall,commands_f1,intent_match,batfish_pass,batfish_violations,batfish_result,batfish_status,ai_verdict,ai_verdict_text,has_error,error_message,timestamp
+VLAN-001,"On router R1, create VLAN 10 with name SALES.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is invalid due to missing interface lines.
+Fix: Add ""interface"" lines to the VLAN config.",0,,2025-11-25T21:34:39.603670
+VLAN-001,"On router R1, create VLAN 10 with name SALES.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is invalid due to missing interface lines.
+Fix: Add ""interface"" lines to the VLAN config.",0,,2025-11-25T21:34:43.930413
+VLAN-001,"On router R1, create VLAN 10 with name SALES.",llama,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,FAIL,"FAIL
+Config is missing interface lines for VLAN 10.
+Fix: Add ""interface vlan 10"" under the VLAN 10 config.",0,,2025-11-25T21:35:01.501935
+VLAN-001,"On router R1, create VLAN 10 with name SALES.",llama,False,False,False,0,0.2857,1.0,0.4444,0,1,0,OK,FAIL,FAIL,"FAIL
+Config is missing interface lines on R1.
+Fix: Add ""interface GigabitEthernet0/0"" to R1 config.",0,,2025-11-25T21:35:21.006737
+VLAN-001,"On router R1, create VLAN 10 with name SALES.",llama,True,True,False,0,0.0,0.0,0.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is incorrect due to validation status error.
+Fix: Create VLAN 10 with name SALES using ""vlan 10"" and ""name SALES"" commands.",0,,2025-11-25T21:35:38.414859
+VLAN-002,"On router R1, create VLAN 20 with name ENGINEERING and VLAN 30 with name MARKETING.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,FAIL,"FAIL
+Config is missing interface lines for VLANs.
+Fix: Add ""interface vlan 20"" and ""interface vlan 30"" to the config.",0,,2025-11-25T21:35:43.170399
+VLAN-002,"On router R1, create VLAN 20 with name ENGINEERING and VLAN 30 with name MARKETING.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to missing interface lines.
+Fix: Add ""interface"" lines to the config.",0,,2025-11-25T21:35:47.906396
+VLAN-002,"On router R1, create VLAN 20 with name ENGINEERING and VLAN 30 with name MARKETING.",llama,True,False,False,0,0.8,1.0,0.8889,0,1,0,OK,FAIL,FAIL,"FAIL
+Config is missing interface lines.
+Fix: Add ""interface"" lines to the VLAN config.",0,,2025-11-25T21:36:05.347456
+VLAN-002,"On router R1, create VLAN 20 with name ENGINEERING and VLAN 30 with name MARKETING.",llama,False,False,False,0,0.4,0.5,0.4444,0,1,0,OK,FAIL,FAIL,"FAIL
+VLAN 20 is missing.
+Add: vlan 20
+name ENGINEERING",0,,2025-11-25T21:36:22.695208
+VLAN-002,"On router R1, create VLAN 20 with name ENGINEERING and VLAN 30 with name MARKETING.",llama,True,True,False,0,0.0,0.0,0.0,0,0,2,ERROR,UNKNOWN,FAIL,Error: 502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+create+VLAN+20+with+name+ENGINEERING+and+VLAN+30+with+name+MARKETING.&model=llama&rag=on,1,502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+create+VLAN+20+with+name+ENGINEERING+and+VLAN+30+with+name+MARKETING.&model=llama&rag=on,2025-11-25T21:36:38.850795
+VLAN-003,"On router R1, assign interface GigabitEthernet0/1 to VLAN 10 as an access port.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology issues.
+Fix: Add missing topology configuration to resolve the issue.",0,,2025-11-25T21:36:43.586686
+VLAN-003,"On router R1, assign interface GigabitEthernet0/1 to VLAN 10 as an access port.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology issues.
+Fix: Add missing topology configuration to resolve the issue.
+Topology is not correctly configured.",0,,2025-11-25T21:36:48.489770
+VLAN-003,"On router R1, assign interface GigabitEthernet0/1 to VLAN 10 as an access port.",llama,True,False,False,0,0.1667,0.25,0.2,0,1,0,OK,PASS,FAIL,"FAIL
+VLAN 10 assignment missing.
+Add: interface GigabitEthernet0/1, switchport mode access, switchport access vlan 10",0,,2025-11-25T21:37:06.968711
+VLAN-003,"On router R1, assign interface GigabitEthernet0/1 to VLAN 10 as an access port.",llama,False,False,False,0,0.6667,0.5,0.5714,0,1,0,OK,FAIL,FAIL,"FAIL
+VLAN assignment missing.
+Fix: interface GigabitEthernet0/1, add ""switchport access vlan 10""",0,,2025-11-25T21:37:17.073277
+VLAN-003,"On router R1, assign interface GigabitEthernet0/1 to VLAN 10 as an access port.",llama,True,True,True,0,0.6667,0.5,0.5714,0,1,0,OK,FAIL,FAIL,"FAIL
+VLAN 10 not assigned to GigabitEthernet0/1.
+Fix: interface GigabitEthernet0/1, switchport access vlan 10.",0,,2025-11-25T21:37:46.144365
+OSPF-001,"On router R1, configure OSPF process 1 and advertise network 10.1.12.0/30 in area 0.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology error.
+Fix: network 10.1.12.0 0.0.0.3 area 0 should be network 10.1.12.0/30 area 0.",0,,2025-11-25T21:37:50.765010
+OSPF-001,"On router R1, configure OSPF process 1 and advertise network 10.1.12.0/30 in area 0.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology and reachability issues.
+Fix: Add a wildcard mask to the network statement, e.g., ""network 10.1.12.0 0.0.0.3 area 0"" should be ""network 10.1.12.0/30 area 0"".",0,,2025-11-25T21:37:55.704915
+OSPF-001,"On router R1, configure OSPF process 1 and advertise network 10.1.12.0/30 in area 0.",llama,True,False,False,0,0.3333,1.0,0.5,0,1,0,OK,PASS,PASS,"PASS
+The config is correct as validation.status is ""PASS"" and all devices have interfaces.
+No fix needed.",0,,2025-11-25T21:38:13.323840
+OSPF-001,"On router R1, configure OSPF process 1 and advertise network 10.1.12.0/30 in area 0.",llama,False,False,False,0,0.3333,1.0,0.5,0,1,0,OK,PASS,PASS,"PASS
+Validation result shows ""status"": ""PASS"" and all devices are reachable.
+Config is correct, no fix needed.",0,,2025-11-25T21:38:30.495825
+OSPF-001,"On router R1, configure OSPF process 1 and advertise network 10.1.12.0/30 in area 0.",llama,True,True,False,0,0.3333,1.0,0.5,0,1,0,OK,PASS,PASS,"PASS
+The config is correct as validation.status is ""PASS"" and all devices have interfaces.
+No fix needed.",0,,2025-11-25T21:38:47.744725
+OSPF-002,"On router R1, configure interface GigabitEthernet0/0 with IP 10.1.12.1/30 and enable OSPF area 0 on it.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation result shows topology_ok as false.
+Fix: Add more networks or interfaces to area 0.",0,,2025-11-25T21:38:52.632760
+OSPF-002,"On router R1, configure interface GigabitEthernet0/0 with IP 10.1.12.1/30 and enable OSPF area 0 on it.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation result shows topology_ok as false.
+Fix: Add more networks or adjust existing ones to ensure full topology connectivity.
+Topology is incomplete.",0,,2025-11-25T21:38:57.629835
+OSPF-002,"On router R1, configure interface GigabitEthernet0/0 with IP 10.1.12.1/30 and enable OSPF area 0 on it.",llama,True,False,False,0,0.0,0.0,0.0,0,0,2,ERROR,UNKNOWN,FAIL,Error: 502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+configure+interface+GigabitEthernet0%2F0+with+IP+10.1.12.1%2F30+and+enable+OSPF+area+0+on+it.&model=llama&rag=on,1,502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+configure+interface+GigabitEthernet0%2F0+with+IP+10.1.12.1%2F30+and+enable+OSPF+area+0+on+it.&model=llama&rag=on,2025-11-25T21:39:14.306079
+OSPF-002,"On router R1, configure interface GigabitEthernet0/0 with IP 10.1.12.1/30 and enable OSPF area 0 on it.",llama,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to unresolved IPs.
+Fix: Add IP to R2's interface for reachability.",0,,2025-11-25T21:39:30.980095
+OSPF-002,"On router R1, configure interface GigabitEthernet0/0 with IP 10.1.12.1/30 and enable OSPF area 0 on it.",llama,True,True,False,0,0.8333,1.0,0.9091,0,1,0,OK,PASS,PASS,"PASS
+The config is correct as validation.status is ""PASS"" and all devices have interfaces.
+No fix needed.",0,,2025-11-25T21:39:49.241013
+OSPF-003,"Configure OSPF between R1 and R2. R1 uses 10.1.12.1/30 on Gi0/0, R2 uses 10.1.12.2/30 on Gi0/0. Both in area 0.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,PASS,PASS,"PASS
+Config is correct as validation.status is ""PASS"" and all devices can reach each other.
+No fix needed.",0,,2025-11-25T21:39:54.991212
+OSPF-003,"Configure OSPF between R1 and R2. R1 uses 10.1.12.1/30 on Gi0/0, R2 uses 10.1.12.2/30 on Gi0/0. Both in area 0.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,PASS,PASS,"PASS
+Config is correct as validation.status is ""PASS"" and all devices can reach each other.
+No fix needed.",0,,2025-11-25T21:40:01.056041
+OSPF-003,"Configure OSPF between R1 and R2. R1 uses 10.1.12.1/30 on Gi0/0, R2 uses 10.1.12.2/30 on Gi0/0. Both in area 0.",llama,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,PASS,PASS,"PASS
+Config is correct as validation.status is ""PASS"" and all devices can reach each other.
+No fix needed.",0,,2025-11-25T21:40:19.162451
+OSPF-003,"Configure OSPF between R1 and R2. R1 uses 10.1.12.1/30 on Gi0/0, R2 uses 10.1.12.2/30 on Gi0/0. Both in area 0.",llama,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,PASS,PASS,"PASS
+Config is correct, validation result shows ""status"": ""PASS"" and all devices are reachable.
+No fix needed.",0,,2025-11-25T21:40:36.602238
+OSPF-003,"Configure OSPF between R1 and R2. R1 uses 10.1.12.1/30 on Gi0/0, R2 uses 10.1.12.2/30 on Gi0/0. Both in area 0.",llama,True,True,False,0,1.0,1.0,1.0,0,1,0,OK,PASS,PASS,"PASS
+Config is correct as validation.status is ""PASS"" and all devices have interfaces.
+No fix needed.",0,,2025-11-25T21:40:54.772700
+OSPF-004,"On router R1, set the OSPF router-id to 1.1.1.1.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,FAIL,"FAIL
+Config is missing interface lines.
+Fix: Add ""interface"" lines to the config.",0,,2025-11-25T21:40:59.155214
+OSPF-004,"On router R1, set the OSPF router-id to 1.1.1.1.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is invalid due to missing interface lines.
+Fix: Add ""interface"" lines to the config, e.g., ""interface GigabitEthernet0/0"".",0,,2025-11-25T21:41:03.525832
+OSPF-004,"On router R1, set the OSPF router-id to 1.1.1.1.",llama,True,False,False,0,0.1667,0.5,0.25,0,1,0,OK,PASS,FAIL,"FAIL
+The config is missing the OSPF router-id setting.
+Fix: router ospf 1, router-id 1.1.1.1",0,,2025-11-25T21:41:21.546801
+OSPF-004,"On router R1, set the OSPF router-id to 1.1.1.1.",llama,False,False,False,0,0.1667,0.5,0.25,0,1,0,OK,PASS,FAIL,"FAIL
+The config is missing the OSPF router-id setting.
+Fix: router-id 1.1.1.1 under router ospf 1.",0,,2025-11-25T21:41:39.375736
+OSPF-004,"On router R1, set the OSPF router-id to 1.1.1.1.",llama,True,True,False,0,0.0,0.0,0.0,0,0,2,ERROR,UNKNOWN,FAIL,Error: 502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+set+the+OSPF+router-id+to+1.1.1.1.&model=llama&rag=on,1,502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+set+the+OSPF+router-id+to+1.1.1.1.&model=llama&rag=on,2025-11-25T21:41:42.803994
+BGP-001,"On router R1, configure BGP with AS number 65001.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology issues.
+Fix: Add a 'neighbor' statement to the BGP configuration.",0,,2025-11-25T21:41:47.320188
+BGP-001,"On router R1, configure BGP with AS number 65001.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology and reachability issues.
+Fix: Add a neighbor statement to establish BGP connections.",0,,2025-11-25T21:41:51.925084
+BGP-001,"On router R1, configure BGP with AS number 65001.",llama,True,False,False,0,0.0,0.0,0.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to unresolved IPs.
+Fix: Add ip address to R2's interface.",0,,2025-11-25T21:42:09.245367
+BGP-001,"On router R1, configure BGP with AS number 65001.",llama,False,False,False,0,0.0,0.0,0.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is incorrect due to unresolved IPs.
+Fix: Add IP address to R1 interface.",0,,2025-11-25T21:42:21.138768
+BGP-001,"On router R1, configure BGP with AS number 65001.",llama,True,True,False,0,0.25,1.0,0.4,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to unresolved IPs.
+Fix: Add IP address to R2's interface.",0,,2025-11-25T21:42:33.128648
+BGP-002,"On router R1 in AS 65001, configure a BGP neighbor 10.1.12.2 in AS 65002.",gemini,True,False,False,0,0.0,0.0,0.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is incorrect due to unresolved IPs.
+Fix: Add IP address to R1 interface connected to 10.1.12.2.",0,,2025-11-25T21:42:37.703136
+BGP-002,"On router R1 in AS 65001, configure a BGP neighbor 10.1.12.2 in AS 65002.",gemini,False,False,False,0,0.0,0.0,0.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is incorrect due to unresolved IPs.
+Fix: Add IP address to R1 interface.",0,,2025-11-25T21:42:42.378137
+BGP-002,"On router R1 in AS 65001, configure a BGP neighbor 10.1.12.2 in AS 65002.",llama,True,False,False,0,0.0,0.0,0.0,0,1,0,OK,PASS,FAIL,"FAIL
+The config is missing BGP neighbor configuration.
+Fix: router bgp 65001, neighbor 10.1.12.2 remote-as 65002",0,,2025-11-25T21:43:01.315144
+BGP-002,"On router R1 in AS 65001, configure a BGP neighbor 10.1.12.2 in AS 65002.",llama,False,False,False,0,0.0,0.0,0.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is incorrect due to unresolved IPs.
+Fix: Add IP address to R1 interface connected to 10.1.12.2.",0,,2025-11-25T21:43:13.577169
+BGP-002,"On router R1 in AS 65001, configure a BGP neighbor 10.1.12.2 in AS 65002.",llama,True,True,True,0,0.0,0.0,0.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is incorrect due to unresolved IPs.
+Fix: Add IP address to R1 interface connected to 10.1.12.2.",0,,2025-11-25T21:43:48.994146
+BGP-003,"Configure eBGP between R1 (AS 65001, IP 10.1.12.1) and R2 (AS 65002, IP 10.1.12.2) on their Gi0/0 interfaces.",gemini,True,False,False,0,0.6667,0.5,0.5714,0,1,0,OK,PASS,PASS,"PASS
+Config is correct as validation.status is ""PASS"" and all devices have interfaces.
+No fix needed.",0,,2025-11-25T21:43:55.202434
+BGP-003,"Configure eBGP between R1 (AS 65001, IP 10.1.12.1) and R2 (AS 65002, IP 10.1.12.2) on their Gi0/0 interfaces.",gemini,False,False,False,0,0.6667,0.5,0.5714,0,1,0,OK,PASS,PASS,"PASS
+Config is correct as validation.status is ""PASS"" and all devices have interfaces.
+No fix needed.",0,,2025-11-25T21:44:00.678152
+BGP-003,"Configure eBGP between R1 (AS 65001, IP 10.1.12.1) and R2 (AS 65002, IP 10.1.12.2) on their Gi0/0 interfaces.",llama,True,False,False,0,0.6667,0.5,0.5714,0,1,0,OK,PASS,PASS,"FAIL
+Validation result shows ""status"": ""PASS"" but config is for OSPF, not eBGP.
+Fix: Replace ""router ospf 1"" with ""router bgp 65001"" on R1 and ""router bgp 65002"" on R2.",0,,2025-11-25T21:44:19.832346
+BGP-003,"Configure eBGP between R1 (AS 65001, IP 10.1.12.1) and R2 (AS 65002, IP 10.1.12.2) on their Gi0/0 interfaces.",llama,False,False,False,0,0.6667,0.5,0.5714,0,1,0,OK,PASS,PASS,"FAIL
+The config is incorrect because it configures OSPF instead of eBGP.
+Fix: Replace ""router ospf 1"" with ""router bgp 65001"" on R1 and ""router bgp 65002"" on R2.",0,,2025-11-25T21:44:37.831200
+BGP-003,"Configure eBGP between R1 (AS 65001, IP 10.1.12.1) and R2 (AS 65002, IP 10.1.12.2) on their Gi0/0 interfaces.",llama,True,True,False,0,0.6667,0.5,0.5714,0,1,0,OK,PASS,PASS,"FAIL
+The config is incorrect because it configures OSPF, not eBGP.
+Fix: Replace ""router ospf 1"" with ""router bgp 65001"" on R1 and ""router bgp 65002"" on R2.",0,,2025-11-25T21:44:56.378780
+INTERFACE-001,"On router R1, configure interface GigabitEthernet0/0 with IP address 192.168.1.1/24.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology issues.
+Fix: interface GigabitEthernet0/0 ip address 192.168.1.1/24",0,,2025-11-25T21:45:01.600807
+INTERFACE-001,"On router R1, configure interface GigabitEthernet0/0 with IP address 192.168.1.1/24.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Config is incorrect due to topology issues.
+Fix: interface GigabitEthernet0/0 ip address 192.168.1.1/24",0,,2025-11-25T21:45:06.506763
+INTERFACE-001,"On router R1, configure interface GigabitEthernet0/0 with IP address 192.168.1.1/24.",llama,True,False,False,0,0.6667,0.6667,0.6667,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to unresolved IPs.
+Fix: Add IP address to R2 interface for reachability.",0,,2025-11-25T21:45:24.678005
+INTERFACE-001,"On router R1, configure interface GigabitEthernet0/0 with IP address 192.168.1.1/24.",llama,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+The config is incorrect because topology_ok is false.
+Fix: interface GigabitEthernet0/0 ip address 192.168.1.1/24",0,,2025-11-25T21:45:42.006083
+INTERFACE-001,"On router R1, configure interface GigabitEthernet0/0 with IP address 192.168.1.1/24.",llama,True,True,False,0,0.6667,0.6667,0.6667,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to unresolved IPs.
+Fix: Add IP address to R2 interface for reachability.",0,,2025-11-25T21:46:00.237787
+INTERFACE-002,"On router R1, configure a loopback interface Loopback0 with IP 1.1.1.1/32.",gemini,True,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology issues.
+Fix: Add missing topology configuration to resolve the issue.",0,,2025-11-25T21:46:05.017273
+INTERFACE-002,"On router R1, configure a loopback interface Loopback0 with IP 1.1.1.1/32.",gemini,False,False,False,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology issues.
+Fix: Add missing topology configuration to resolve the issue.
+Topology is not correctly configured.",0,,2025-11-25T21:46:10.120307
+INTERFACE-002,"On router R1, configure a loopback interface Loopback0 with IP 1.1.1.1/32.",llama,True,False,False,0,0.0,0.0,0.0,0,0,2,ERROR,UNKNOWN,FAIL,Error: 502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+configure+a+loopback+interface+Loopback0+with+IP+1.1.1.1%2F32.&model=llama&rag=on,1,502: T2 request failed: 502 Server Error: Bad Gateway for url: http://localhost:8001/v1/getAnswer?q=On+router+R1%2C+configure+a+loopback+interface+Loopback0+with+IP+1.1.1.1%2F32.&model=llama&rag=on,2025-11-25T21:46:26.776359
+INTERFACE-002,"On router R1, configure a loopback interface Loopback0 with IP 1.1.1.1/32.",llama,False,False,False,0,0.6667,0.6667,0.6667,0,1,0,OK,FAIL,PASS,"FAIL
+The config is incorrect due to topology issues.
+Fix: ip address 1.1.1.1 255.255.255.255",0,,2025-11-25T21:46:44.150285
+INTERFACE-002,"On router R1, configure a loopback interface Loopback0 with IP 1.1.1.1/32.",llama,True,True,True,0,1.0,1.0,1.0,0,1,0,OK,FAIL,PASS,"FAIL
+Validation status is FAIL due to topology issues.
+Fix: Add missing topology configuration to resolve the issue.",0,,2025-11-25T21:47:19.702872
