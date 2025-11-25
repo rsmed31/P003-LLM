@@ -23,7 +23,7 @@
             "protocol": "SECURITY",
             "intent": [
               {
-                "type": "management_access",
+                "type": "policy",
                 "service": "SSH",
                 "requirements": [
                   "Disable Telnet on VTY lines",
@@ -65,7 +65,7 @@
             "protocol": "SECURITY",
             "intent": [
               {
-                "type": "access_control",
+                "type": "policy",
                 "scope": "management_plane",
                 "description": "Restrict SSH VTY access to 192.168.10.0/24 only.",
                 "endpoints": [
@@ -104,7 +104,7 @@
             "protocol": "SECURITY",
             "intent": [
               {
-                "type": "access_control",
+                "type": "policy",
                 "scope": "data_plane",
                 "description": "Block HTTP/HTTPS from guest subnet to protected server while allowing other traffic.",
                 "endpoints": [
@@ -143,7 +143,7 @@
             "protocol": "SECURITY",
             "intent": [
               {
-                "type": "authentication",
+                "type": "policy",
                 "method": "RADIUS_with_local_fallback",
                 "description": "Use central RADIUS for remote login, fallback to local users if RADIUS is unavailable.",
                 "endpoints": [
@@ -185,7 +185,7 @@
             "protocol": "SECURITY",
             "intent": [
               {
-                "type": "port_access_control",
+                "type": "interface",
                 "method": "802.1X",
                 "description": "Require 802.1X authentication on access port using RADIUS server for VLAN 20.",
                 "endpoints": [

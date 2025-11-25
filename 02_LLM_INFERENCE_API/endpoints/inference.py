@@ -140,7 +140,7 @@ def callLlama(api_link, prompt, api_key=None, model=None):
         "messages": [{"role": "user", "content": prompt}],
         "stream": False  # enforce non-streaming
     }
-    response = requests.post(api_link, json=payload, headers=headers, timeout=120)
+    response = requests.post(api_link, json=payload, headers=headers, timeout=1200)
     response.raise_for_status()
     data = response.json()
     return (data.get("message", {}) or {}).get("content", "").strip()

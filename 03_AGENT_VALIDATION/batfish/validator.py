@@ -389,8 +389,11 @@ def _extract_device_ips(changes: Dict[str, List[str]]) -> Dict[str, str]:
 
 def _run_reach(changes: Dict[str, List[str]], reach_paths: List[dict]) -> List[Dict[str, Any]]:
     """
-    Protocol-agnostic reachability test using srcIps/dstIps headers.
-    No node() specifier - pure IP-based flow simulation.
+    Enhanced reachability test with protocol/port/action support.
+    Supports:
+      - Simple { "src": "R1", "dst": "R2" } (default must_reach)
+      - Extended { "src": "...", "dst": "...", "protocol": "tcp|udp|icmp|ip", 
+                   "dst_ports": [22, 80], "action": "permit|deny|must_reach|must_not_reach" }
     """
     device_ips = _extract_device_ips(changes)
     log.info(f"Device IP mappings: {device_ips}")
@@ -399,37 +402,95 @@ def _run_reach(changes: Dict[str, List[str]], reach_paths: List[dict]) -> List[D
     for path in reach_paths or []:
         src = path.get("src")
         dst = path.get("dst")
-        
+         
         if not src or not dst:
-            results.append({"src": src, "dst": dst, "status": "FAIL", "error": "Missing src/dst"})
-            continue
-        
-        src_ip = device_ips.get(src)
-        dst_ip = device_ips.get(dst)
-        
-        if not src_ip or not dst_ip:
-            log.error(f"IP lookup failed: {src}={src_ip}, {dst}={dst_ip}")
             results.append({
-                "src": src, "dst": dst, "status": "FAIL",
-                "error": f"Unresolved IPs (src={src_ip}, dst={dst_ip})"
+                "src": src, "dst": dst, "action": "must_reach",
+                "status": "FAIL", "detail": "Missing src/dst", "flow_count": 0
             })
             continue
         
-        log.info(f"Reachability: {src} ({src_ip}) → {dst} ({dst_ip})")
+        # Resolve src/dst to IPs (device name -> IP, or use as-is if looks like IP)
+        def _resolve_ip(val: str) -> str:
+            # If contains '.' -> treat as IP/prefix
+            if '.' in val:
+                return val
+            # Else look up device IP
+            resolved = device_ips.get(val)
+            if not resolved:
+                log.warning(f"Could not resolve '{val}' to IP, using as-is")
+                return val
+            return resolved
+        
+        src_ip = _resolve_ip(src)
+        dst_ip = _resolve_ip(dst)
+        
+        # Extract optional fields
+        protocol = path.get("protocol", "").lower()
+        dst_ports = path.get("dst_ports", [])
+        action = path.get("action", "must_reach").lower()
+        
+        # Normalize action aliases
+        if action in ["permit", "allow", "must_allow"]:
+            action = "must_reach"
+        elif action in ["deny", "block", "must_deny"]:
+            action = "must_not_reach"
+        
+        # Build headers dict
+        headers = {
+            "srcIps": src_ip,
+            "dstIps": dst_ip
+        }
+        
+        # Add protocol if specified
+        if protocol in ["tcp", "udp", "icmp"]:
+            headers["ipProtocols"] = protocol
+        elif protocol == "ip":
+            pass  # No restriction (default)
+        elif protocol:
+            log.warning(f"Unknown protocol '{protocol}', ignoring")
+        
+        # Add dst_ports if applicable
+        if dst_ports and protocol in ["tcp", "udp"]:
+            # Convert to comma-separated string or list
+            headers["dstPorts"] = ",".join(str(p) for p in dst_ports)
+        
+        log.info(f"Reachability: {src} ({src_ip}) → {dst} ({dst_ip}), action={action}, headers={headers}")
         
         try:
             ans = bf.q.reachability(
-                headers={"srcIps": src_ip, "dstIps": dst_ip}
+                headers=headers,
+                pathConstraints=PathConstraints()
             ).answer().frame()
             
-            status = "PASS" if len(ans) > 0 else "FAIL"
+            flow_count = len(ans)
+            
+            # Determine PASS/FAIL based on action
+            if action == "must_reach":
+                status = "PASS" if flow_count > 0 else "FAIL"
+                detail = f"{flow_count} flows found" if flow_count > 0 else "No reachable paths"
+            elif action == "must_not_reach":
+                status = "PASS" if flow_count == 0 else "FAIL"
+                detail = "Correctly blocked (no paths)" if flow_count == 0 else f"Unexpected reachability: {flow_count} flows found"
+            else:
+                status = "FAIL"
+                detail = f"Unknown action: {action}"
+            
             results.append({
-                "src": src, "dst": dst, "status": status,
-                "error": "" if status == "PASS" else "No reachable paths"
+                "src": src,
+                "dst": dst,
+                "action": action,
+                "status": status,
+                "detail": detail,
+                "flow_count": flow_count
             })
+            
         except Exception as e:
-            log.error(f"Reachability error {src}→{dst}: {e}")
-            results.append({"src": src, "dst": dst, "status": "ERROR", "error": str(e)})
+            log.error(f"Reachability error {src}→{dst}: {e}\n{traceback.format_exc()}")
+            results.append({
+                "src": src, "dst": dst, "action": action,
+                "status": "FAIL", "detail": f"Exception: {str(e)}", "flow_count": 0
+            })
     
     return results
 
@@ -449,39 +510,677 @@ def debug_bf():
         raise HTTPException(status_code=500, detail=str(e))
 
 def _evaluate_interface_intents(changes: Dict[str, List[str]], interface_intents: List[dict]) -> Dict[str, Any]:
-    # Very lightweight: verify referenced device appears in changes and an interface line exists
-    # NOTE: Normalizes device names to lowercase to match Batfish parsing
+    """
+    Batfish-based interface validation supporting:
+      - admin_up: verify interface is administratively up
+      - access_vlan: verify VLAN assignment for access ports
+      - mode: verify switchport mode (access/trunk)
+      - mtu: verify MTU value
+    
+    Intent shape:
+    {
+      "type": "interface",
+      "endpoints": [
+        {"role": "device", "id": "R1"},
+        {"role": "interface", "id": "GigabitEthernet0/2"}
+      ],
+      "properties": {
+        "admin_up": true,
+        "access_vlan": 20,
+        "mode": "access",
+        "mtu": 1500
+      }
+    }
+    
+    If properties is missing, performs lightweight check (device has >= 1 interface).
+    """
+    if not interface_intents:
+        return {"status": "SKIPPED", "items": []}
+    
     results = []
-    for item in interface_intents:
-        eps = item.get("endpoints", [])
-        ids = [e.get("id") for e in eps if isinstance(e, dict) and e.get("id")]
-        status = "FAIL"
-        detail = "No device"
-        if ids:
-            dev = ids[0]
-            normalized_dev = dev.lower()
-            cmds = changes.get(dev, [])
-            if any(c.startswith("interface ") for c in cmds):
-                status = "PASS"
-                detail = "interface present"
+    
+    try:
+        # Query interface properties once for all checks
+        df = bf.q.interfaceProperties().answer().frame()
+        log.info(f"Interface query returned {len(df)} rows")
+        
+        for item in interface_intents:
+            eps = item.get("endpoints", [])
+            props = item.get("properties", {})
+            
+            # Extract device and interface from endpoints
+            device = None
+            iface = None
+            
+            for ep in eps:
+                if not isinstance(ep, dict):
+                    continue
+                role = ep.get("role", "").lower()
+                ep_id = ep.get("id")
+                
+                if role == "device" and ep_id:
+                    device = ep_id
+                elif role == "interface" and ep_id:
+                    iface = ep_id
+            
+            # Fallback: use first endpoint id if structured approach didn't work
+            if not device and eps:
+                device = eps[0].get("id") if isinstance(eps[0], dict) else eps[0]
+            
+            if not device:
+                results.append({
+                    "device": None,
+                    "interface": iface,
+                    "status": "FAIL",
+                    "detail": "No device specified",
+                    "checked_properties": {}
+                })
+                continue
+            
+            # Filter dataframe for this device (and interface if specified)
+            device_lower = device.lower()
+            mask = df['Node'].str.lower() == device_lower
+            
+            if iface:
+                # Match interface name (case-insensitive substring or exact match)
+                iface_lower = iface.lower()
+                mask = mask & (
+                    df['Interface'].str.lower().str.contains(iface_lower, na=False) |
+                    df['Interface'].str.lower().str.endswith(iface_lower)
+                )
+            
+            filtered = df[mask]
+            
+            if filtered.empty:
+                results.append({
+                    "device": device,
+                    "interface": iface,
+                    "status": "FAIL",
+                    "detail": f"Interface not found in Batfish snapshot",
+                    "checked_properties": {}
+                })
+                continue
+            
+            # If no properties specified, just verify interface exists
+            if not props:
+                results.append({
+                    "device": device,
+                    "interface": iface or "any",
+                    "status": "PASS",
+                    "detail": f"Interface present ({len(filtered)} found)",
+                    "checked_properties": {}
+                })
+                continue
+            
+            # Check each property
+            checked = {}
+            failures = []
+            
+            # admin_up check
+            if "admin_up" in props:
+                expected_up = props["admin_up"]
+                # Try both 'Active' and 'Admin_Up' columns (Batfish versions differ)
+                admin_col = None
+                if 'Active' in filtered.columns:
+                    admin_col = 'Active'
+                elif 'Admin_Up' in filtered.columns:
+                    admin_col = 'Admin_Up'
+                
+                if admin_col:
+                    actual_up = filtered[admin_col].iloc[0] if not filtered.empty else False
+                    checked["admin_up"] = {"expected": expected_up, "actual": actual_up}
+                    if bool(actual_up) != bool(expected_up):
+                        failures.append(f"admin_up mismatch: expected={expected_up}, actual={actual_up}")
+                else:
+                    checked["admin_up"] = {"expected": expected_up, "actual": "N/A (column not found)"}
+            
+            # access_vlan check
+            if "access_vlan" in props:
+                expected_vlan = props["access_vlan"]
+                if 'Access_VLAN' in filtered.columns:
+                    actual_vlan = filtered['Access_VLAN'].iloc[0] if not filtered.empty else None
+                    checked["access_vlan"] = {"expected": expected_vlan, "actual": actual_vlan}
+                    if actual_vlan != expected_vlan:
+                        failures.append(f"access_vlan mismatch: expected={expected_vlan}, actual={actual_vlan}")
+                elif 'Switchport_Access_VLAN' in filtered.columns:
+                    actual_vlan = filtered['Switchport_Access_VLAN'].iloc[0] if not filtered.empty else None
+                    checked["access_vlan"] = {"expected": expected_vlan, "actual": actual_vlan}
+                    if actual_vlan != expected_vlan:
+                        failures.append(f"access_vlan mismatch: expected={expected_vlan}, actual={actual_vlan}")
+                else:
+                    checked["access_vlan"] = {"expected": expected_vlan, "actual": "N/A (not a switchport)"}
+            
+            # mode check (access/trunk)
+            if "mode" in props:
+                expected_mode = props["mode"].lower()
+                if 'Switchport_Mode' in filtered.columns:
+                    actual_mode_raw = filtered['Switchport_Mode'].iloc[0] if not filtered.empty else None
+                    actual_mode = str(actual_mode_raw).lower() if actual_mode_raw else "none"
+                    checked["mode"] = {"expected": expected_mode, "actual": actual_mode}
+                    if expected_mode not in actual_mode:
+                        failures.append(f"mode mismatch: expected={expected_mode}, actual={actual_mode}")
+                else:
+                    checked["mode"] = {"expected": expected_mode, "actual": "N/A (not a switchport)"}
+            
+            # mtu check
+            if "mtu" in props:
+                expected_mtu = props["mtu"]
+                if 'MTU' in filtered.columns:
+                    actual_mtu = filtered['MTU'].iloc[0] if not filtered.empty else None
+                    checked["mtu"] = {"expected": expected_mtu, "actual": actual_mtu}
+                    if actual_mtu != expected_mtu:
+                        failures.append(f"mtu mismatch: expected={expected_mtu}, actual={actual_mtu}")
+                else:
+                    checked["mtu"] = {"expected": expected_mtu, "actual": "N/A (column not found)"}
+            
+            # Determine status
+            if failures:
+                status = "FAIL"
+                detail = "; ".join(failures)
             else:
-                detail = "no interface lines"
-        results.append({"device": ids[0] if ids else None, "status": status, "detail": detail})
-    # Overall pass if all PASS
-    agg_status = "PASS" if results and all(r["status"] == "PASS" for r in results) else ("SKIPPED" if not results else "FAIL")
+                status = "PASS"
+                detail = f"All {len(checked)} properties matched"
+            
+            results.append({
+                "device": device,
+                "interface": iface or filtered['Interface'].iloc[0],
+                "status": status,
+                "detail": detail,
+                "checked_properties": checked
+            })
+            
+    except Exception as e:
+        log.error(f"Interface intent evaluation failed: {e}\n{traceback.format_exc()}")
+        results.append({
+            "device": None,
+            "interface": None,
+            "status": "FAIL",
+            "detail": f"Exception: {str(e)}",
+            "checked_properties": {}
+        })
+    
+    # Aggregate status
+    if not results:
+        agg_status = "SKIPPED"
+    elif all(r["status"] == "PASS" for r in results):
+        agg_status = "PASS"
+    else:
+        agg_status = "FAIL"
+    
     return {"status": agg_status, "items": results}
 
+
 def _evaluate_policy_intents(policy_intents: List[dict]) -> Dict[str, Any]:
-    # Placeholder: not implemented yet
+    """
+    Policy intent validation using Batfish reachability.
+    Supports access control policies with permit/deny actions.
+    
+    Intent shape:
+    {
+      "type": "policy",
+      "subtype": "access_control" | "management_access" | "authentication",
+      "action": "permit" | "deny",
+      "protocol": "tcp" | "udp" | "icmp" | "ip",
+      "dst_ports": [22, 80, 443],
+      "service": "SSH" | "HTTP" | "HTTPS",
+      "scope": "data_plane" | "management_plane",
+      "endpoints": [
+        {"role": "src", "id": "192.168.20.0/24"},
+        {"role": "dst", "id": "10.10.10.10"}
+      ],
+      "description": "..."
+    }
+    
+    Fallback: If action missing, infer from description keywords.
+    """
     if not policy_intents:
         return {"status": "SKIPPED", "items": []}
-    return {"status": "SKIPPED", "items": [{"status": "SKIPPED", "detail": "not implemented"}]}
+    
+    results = []
+    
+    # Try to get device IPs for resolution (if available)
+    device_ips = {}
+    try:
+        # Query nodes to build device->IP mapping
+        node_props = bf.q.nodeProperties().answer().frame()
+        iface_props = bf.q.interfaceProperties().answer().frame()
+        
+        # Extract primary IP per device (prefer loopback)
+        for node in node_props['Node'].unique():
+            node_ifaces = iface_props[iface_props['Node'] == node]
+            loopback_ip = None
+            first_ip = None
+            
+            for _, row in node_ifaces.iterrows():
+                ip_str = str(row.get('Primary_Address', ''))
+                if ip_str and ip_str != 'nan' and '/' in ip_str:
+                    ip_addr = ip_str.split('/')[0]
+                    if 'loopback' in str(row.get('Interface', '')).lower():
+                        loopback_ip = ip_addr
+                    elif not first_ip:
+                        first_ip = ip_addr
+            
+            device_ips[node] = loopback_ip or first_ip or f"0.0.0.{len(device_ips)+1}"
+        
+        log.info(f"Policy intents: device_ips={device_ips}")
+    except Exception as e:
+        log.warning(f"Could not build device IP map for policy intents: {e}")
+    
+    for item in policy_intents:
+        action = item.get("action", "").lower()
+        description = item.get("description", "").lower()
+        
+        # Infer action from description if missing
+        if not action:
+            if any(kw in description for kw in ["block", "deny", "drop"]):
+                action = "deny"
+            elif any(kw in description for kw in ["allow", "permit", "enable"]):
+                action = "permit"
+            else:
+                results.append({
+                    "src": None,
+                    "dst": None,
+                    "action": "unknown",
+                    "status": "SKIPPED",
+                    "flow_count": 0,
+                    "detail": "Cannot infer action from description"
+                })
+                continue
+        
+        # Extract endpoints
+        endpoints = item.get("endpoints", [])
+        src_id = None
+        dst_id = None
+        
+        for ep in endpoints:
+            if not isinstance(ep, dict):
+                continue
+            role = ep.get("role", "").lower()
+            ep_id = ep.get("id")
+            
+            if role == "src" and ep_id:
+                src_id = ep_id
+            elif role == "dst" and ep_id:
+                dst_id = ep_id
+        
+        # Fallback: use first two endpoint ids if role-based didn't work
+        if not src_id and len(endpoints) > 0:
+            src_id = endpoints[0].get("id") if isinstance(endpoints[0], dict) else endpoints[0]
+        if not dst_id and len(endpoints) > 1:
+            dst_id = endpoints[1].get("id") if isinstance(endpoints[1], dict) else endpoints[1]
+        
+        if not src_id or not dst_id:
+            results.append({
+                "src": src_id,
+                "dst": dst_id,
+                "action": action,
+                "status": "FAIL",
+                "flow_count": 0,
+                "detail": "Missing src or dst endpoint"
+            })
+            continue
+        
+        # Resolve src/dst to IPs
+        def _resolve_ip(val: str) -> str:
+            if '.' in val:
+                return val
+            return device_ips.get(val, val)
+        
+        src_ip = _resolve_ip(src_id)
+        dst_ip = _resolve_ip(dst_id)
+        
+        # Extract protocol and ports
+        protocol = item.get("protocol", "").lower()
+        dst_ports = item.get("dst_ports", [])
+        service = item.get("service", "").upper()
+        
+        # Map service to protocol/ports if not explicitly set
+        if service and not protocol:
+            service_map = {
+                "SSH": ("tcp", [22]),
+                "HTTP": ("tcp", [80]),
+                "HTTPS": ("tcp", [443]),
+                "TELNET": ("tcp", [23]),
+                "FTP": ("tcp", [21]),
+                "DNS": ("udp", [53]),
+                "DHCP": ("udp", [67, 68]),
+            }
+            if service in service_map:
+                protocol, dst_ports = service_map[service]
+        
+        # Build headers
+        headers = {
+            "srcIps": src_ip,
+            "dstIps": dst_ip
+        }
+        
+        if protocol in ["tcp", "udp", "icmp"]:
+            headers["ipProtocols"] = protocol
+        
+        if dst_ports and protocol in ["tcp", "udp"]:
+            headers["dstPorts"] = ",".join(str(p) for p in dst_ports)
+        
+        log.info(f"Policy intent: {src_id} ({src_ip}) → {dst_id} ({dst_ip}), action={action}, headers={headers}")
+        
+        try:
+            ans = bf.q.reachability(
+                headers=headers,
+                pathConstraints=PathConstraints()
+            ).answer().frame()
+            
+            flow_count = len(ans)
+            
+            # Determine PASS/FAIL based on action
+            if action in ["permit", "allow"]:
+                status = "PASS" if flow_count > 0 else "FAIL"
+                detail = f"Policy allows traffic ({flow_count} flows)" if flow_count > 0 else "Traffic blocked (policy failed)"
+            elif action in ["deny", "block"]:
+                status = "PASS" if flow_count == 0 else "FAIL"
+                detail = "Traffic correctly blocked" if flow_count == 0 else f"Policy violation: {flow_count} flows allowed"
+            else:
+                status = "FAIL"
+                detail = f"Unknown action: {action}"
+            
+            results.append({
+                "src": src_id,
+                "dst": dst_id,
+                "action": action,
+                "status": status,
+                "flow_count": flow_count,
+                "detail": detail
+            })
+            
+        except Exception as e:
+            log.error(f"Policy intent error {src_id}→{dst_id}: {e}\n{traceback.format_exc()}")
+            results.append({
+                "src": src_id,
+                "dst": dst_id,
+                "action": action,
+                "status": "FAIL",
+                "flow_count": 0,
+                "detail": f"Exception: {str(e)}"
+            })
+    
+    # Aggregate status
+    if not results:
+        agg_status = "SKIPPED"
+    else:
+        non_skipped = [r for r in results if r["status"] != "SKIPPED"]
+        if not non_skipped:
+            agg_status = "SKIPPED"
+        elif all(r["status"] == "PASS" for r in non_skipped):
+            agg_status = "PASS"
+        else:
+            agg_status = "FAIL"
+    
+    return {"status": agg_status, "items": results}
+
 
 def _evaluate_redundancy_intents(redundancy_intents: List[dict]) -> Dict[str, Any]:
-    # Placeholder: not implemented yet
+    """
+    Redundancy intent validation with two modes:
+    
+    1. paths mode: Verify >= N distinct forwarding paths exist
+    2. nexthops mode: Verify >= N distinct next-hops exist in routing table
+    
+    Intent shape:
+    {
+      "type": "redundancy",
+      "mode": "paths" | "nexthops",
+      "min_paths": 2,
+      "min_nexthops": 2,
+      "endpoints": [
+        {"role": "src", "id": "R1"},
+        {"role": "dst", "id": "R2"}
+      ]
+    }
+    """
     if not redundancy_intents:
         return {"status": "SKIPPED", "items": []}
-    return {"status": "SKIPPED", "items": [{"status": "SKIPPED", "detail": "not implemented"}]}
+    
+    results = []
+    
+    # Build device IP mapping for resolution
+    device_ips = {}
+    try:
+        node_props = bf.q.nodeProperties().answer().frame()
+        iface_props = bf.q.interfaceProperties().answer().frame()
+        
+        for node in node_props['Node'].unique():
+            node_ifaces = iface_props[iface_props['Node'] == node]
+            loopback_ip = None
+            first_ip = None
+            
+            for _, row in node_ifaces.iterrows():
+                ip_str = str(row.get('Primary_Address', ''))
+                if ip_str and ip_str != 'nan' and '/' in ip_str:
+                    ip_addr = ip_str.split('/')[0]
+                    if 'loopback' in str(row.get('Interface', '')).lower():
+                        loopback_ip = ip_addr
+                    elif not first_ip:
+                        first_ip = ip_addr
+            
+            device_ips[node] = loopback_ip or first_ip
+        
+        log.info(f"Redundancy intents: device_ips={device_ips}")
+    except Exception as e:
+        log.warning(f"Could not build device IP map for redundancy: {e}")
+    
+    for item in redundancy_intents:
+        mode = item.get("mode", "").lower()
+        min_paths = item.get("min_paths", 2)
+        min_nexthops = item.get("min_nexthops", 2)
+        
+        # Extract endpoints
+        endpoints = item.get("endpoints", [])
+        src_id = None
+        dst_id = None
+        
+        for ep in endpoints:
+            if not isinstance(ep, dict):
+                continue
+            role = ep.get("role", "").lower()
+            ep_id = ep.get("id")
+            
+            if role == "src" and ep_id:
+                src_id = ep_id
+            elif role == "dst" and ep_id:
+                dst_id = ep_id
+        
+        # Fallback: use first two endpoint ids
+        if not src_id and len(endpoints) > 0:
+            src_id = endpoints[0].get("id") if isinstance(endpoints[0], dict) else endpoints[0]
+        if not dst_id and len(endpoints) > 1:
+            dst_id = endpoints[1].get("id") if isinstance(endpoints[1], dict) else endpoints[1]
+        
+        if mode == "paths":
+            # Verify multiple distinct forwarding paths
+            if not src_id or not dst_id:
+                results.append({
+                    "mode": mode,
+                    "min_paths": min_paths,
+                    "observed_paths": 0,
+                    "status": "FAIL",
+                    "detail": "Missing src or dst endpoint"
+                })
+                continue
+            
+            # Resolve IPs
+            def _resolve_ip(val: str) -> str:
+                if '.' in val:
+                    return val
+                return device_ips.get(val, val)
+            
+            src_ip = _resolve_ip(src_id)
+            dst_ip = _resolve_ip(dst_id)
+            
+            log.info(f"Redundancy paths check: {src_id} ({src_ip}) → {dst_id} ({dst_ip}), min_paths={min_paths}")
+            
+            try:
+                # Use traceroute or reachability with maxTraces to discover paths
+                ans = bf.q.traceroute(
+                    startLocation=src_id,
+                    headers={"dstIps": dst_ip}
+                ).answer().frame()
+                
+                # Count distinct paths by hashing the trace hops
+                if 'Traces' in ans.columns:
+                    distinct_paths = set()
+                    for traces in ans['Traces']:
+                        if isinstance(traces, list):
+                            for trace in traces:
+                                # Hash the sequence of hops
+                                hops = []
+                                if hasattr(trace, 'hops'):
+                                    for hop in trace.hops:
+                                        node = getattr(hop, 'node', None)
+                                        iface = getattr(hop, 'outputInterface', None)
+                                        if node:
+                                            hops.append((node, iface))
+                                path_sig = tuple(hops)
+                                if path_sig:
+                                    distinct_paths.add(path_sig)
+                    
+                    observed_paths = len(distinct_paths)
+                else:
+                    # Fallback: count number of flow results
+                    observed_paths = len(ans) if not ans.empty else 0
+                
+                status = "PASS" if observed_paths >= min_paths else "FAIL"
+                detail = f"{observed_paths} distinct paths found (min: {min_paths})"
+                
+                results.append({
+                    "mode": mode,
+                    "min_paths": min_paths,
+                    "observed_paths": observed_paths,
+                    "status": status,
+                    "detail": detail
+                })
+                
+            except Exception as e:
+                log.error(f"Redundancy paths check failed: {e}\n{traceback.format_exc()}")
+                results.append({
+                    "mode": mode,
+                    "min_paths": min_paths,
+                    "observed_paths": 0,
+                    "status": "FAIL",
+                    "detail": f"Exception: {str(e)}"
+                })
+        
+        elif mode == "nexthops":
+            # Verify multiple distinct next-hops in routing table
+            if not src_id or not dst_id:
+                results.append({
+                    "mode": mode,
+                    "min_nexthops": min_nexthops,
+                    "observed_nexthops": 0,
+                    "status": "FAIL",
+                    "detail": "Missing src or dst endpoint"
+                })
+                continue
+            
+            # Resolve destination IP for route lookup
+            def _resolve_ip(val: str) -> str:
+                if '.' in val:
+                    return val
+                return device_ips.get(val, val)
+            
+            dst_ip = _resolve_ip(dst_id)
+            
+            log.info(f"Redundancy nexthops check: {src_id} → {dst_id} ({dst_ip}), min_nexthops={min_nexthops}")
+            
+            try:
+                # Query routes for the source device
+                routes = bf.q.routes(
+                    nodes=f"/{src_id}/"
+                ).answer().frame()
+                
+                if routes.empty:
+                    results.append({
+                        "mode": mode,
+                        "min_nexthops": min_nexthops,
+                        "observed_nexthops": 0,
+                        "status": "FAIL",
+                        "detail": f"No routes found for {src_id}"
+                    })
+                    continue
+                
+                # Filter routes that match destination
+                import ipaddress
+                
+                def _matches_destination(network_str: str, dst: str) -> bool:
+                    try:
+                        net = ipaddress.ip_network(network_str, strict=False)
+                        dst_addr = ipaddress.ip_address(dst.split('/')[0])
+                        return dst_addr in net
+                    except:
+                        return False
+                
+                # Find routes covering the destination
+                matching_routes = []
+                for _, row in routes.iterrows():
+                    network = row.get('Network', '')
+                    if _matches_destination(str(network), dst_ip):
+                        matching_routes.append(row)
+                
+                if not matching_routes:
+                    # Try default route (0.0.0.0/0)
+                    matching_routes = [r for _, r in routes.iterrows() if '0.0.0.0/0' in str(r.get('Network', ''))]
+                
+                # Count distinct next-hops
+                nexthops = set()
+                for route in matching_routes:
+                    nh_ip = route.get('Next_Hop_IP', '')
+                    nh_iface = route.get('Next_Hop_Interface', '')
+                    if nh_ip and str(nh_ip) != 'nan':
+                        nexthops.add(str(nh_ip))
+                    elif nh_iface and str(nh_iface) != 'nan':
+                        nexthops.add(str(nh_iface))
+                
+                observed_nexthops = len(nexthops)
+                status = "PASS" if observed_nexthops >= min_nexthops else "FAIL"
+                detail = f"{observed_nexthops} distinct next-hops found (min: {min_nexthops}): {list(nexthops)[:5]}"
+                
+                results.append({
+                    "mode": mode,
+                    "min_nexthops": min_nexthops,
+                    "observed_nexthops": observed_nexthops,
+                    "status": status,
+                    "detail": detail
+                })
+                
+            except Exception as e:
+                log.error(f"Redundancy nexthops check failed: {e}\n{traceback.format_exc()}")
+                results.append({
+                    "mode": mode,
+                    "min_nexthops": min_nexthops,
+                    "observed_nexthops": 0,
+                    "status": "FAIL",
+                    "detail": f"Exception: {str(e)}"
+                })
+        
+        else:
+            # Unknown mode
+            results.append({
+                "mode": mode or "unknown",
+                "status": "SKIPPED",
+                "detail": f"Unknown redundancy mode: {mode}"
+            })
+    
+    # Aggregate status
+    if not results:
+        agg_status = "SKIPPED"
+    else:
+        non_skipped = [r for r in results if r["status"] != "SKIPPED"]
+        if not non_skipped:
+            agg_status = "SKIPPED"
+        elif all(r["status"] == "PASS" for r in non_skipped):
+            agg_status = "PASS"
+        else:
+            agg_status = "FAIL"
+    
+    return {"status": agg_status, "items": results}
+
 
 def _enrich_interface_config(config_text: str) -> str:
     """
@@ -666,13 +1365,22 @@ def evaluate(req: EvaluateRequest):
         log.error(f"Validation failed: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail={"stage":"VERIFY","error":str(e)})
 
-    # Determine overall status
+    # Determine overall status - all intent types contribute
     reach_ok = all(r["status"] == "PASS" for r in reach_summary) if reach_summary else True
     tp_ok = tp_summary.get("status") == "PASS"
     cp_status = cp_summary.get("status")
     
-    # Base overall status on topology + reachability
-    if tp_ok and reach_ok:
+    # Evaluate new intent types (SKIPPED is neutral, doesn't cause FAIL)
+    iface_status = iface_summary.get("status", "SKIPPED")
+    policy_status = policy_summary.get("status", "SKIPPED")
+    red_status = red_summary.get("status", "SKIPPED")
+    
+    iface_ok = iface_status in ("PASS", "SKIPPED")
+    policy_ok = policy_status in ("PASS", "SKIPPED")
+    red_ok = red_status in ("PASS", "SKIPPED")
+    
+    # Overall status: ALL checks must pass (or be skipped)
+    if tp_ok and reach_ok and iface_ok and policy_ok and red_ok:
         overall_status = "PASS"
     else:
         overall_status = "FAIL"
@@ -687,12 +1395,23 @@ def evaluate(req: EvaluateRequest):
         "status_reason": {
             "topology_ok": tp_ok,
             "reach_ok": reach_ok,
+            "interface_ok": iface_ok,
+            "policy_ok": policy_ok,
+            "redundancy_ok": red_ok,
             "cp_status": cp_status,
             "cp_rows": cp_summary.get("rows"),
             "cp_devices_with_interfaces": f"{len(cp_summary.get('active_devices', []))}/{len(changed_devices)}",
             "cp_advisory": True
         },
         "snapshot": snapshot_name,
+        "validation": {
+            "reachability": reach_summary,
+            "topology": tp_summary,
+            "control_plane": cp_summary,
+            "interface": iface_summary,
+            "policy": policy_summary,
+            "redundancy": red_summary
+        },
         "summary": {
             "CP": cp_summary,
             "TP": tp_summary,
