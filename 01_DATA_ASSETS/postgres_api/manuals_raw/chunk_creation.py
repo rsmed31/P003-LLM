@@ -52,7 +52,7 @@ def process_directory_json(input_dir,
                     with open(filepath, 'r', encoding='utf-8') as f:
                         text = f.read()
                 except Exception as e:
-                    print(f"Fehler beim Lesen von {filename}: {e}")
+                    print(f"Error reading {filename}: {e}")
                     continue
 
                 cleaned = clean_text(text)
@@ -71,12 +71,11 @@ def process_directory_json(input_dir,
 
                     total_chunks += 1
                     if total_chunks % log_every == 0:
-                        print(f"{total_chunks} Chunks bisher gespeichert...")
+                        print(f"{total_chunks} Chunks got saved...")
 
         out.write("\n]\n")
 
-    print(f"✅ Fertig! {total_chunks} Chunks gespeichert in {output_file}")
-
+    print(f"Done! {total_chunks} Chunks saved in {output_file}")
 # Main
 if __name__ == "__main__":
     input_dir = "./manuals_raw/docs/"

@@ -22,9 +22,9 @@ APP_PID=$!
 echo "🧾 Running document processing scripts..."
 set +e  # allow individual scripts to fail without stopping container
 
-python3 ./manuals_raw/PDFExtractorV2.py || echo "⚠️ PDFExtractorV2.py failed"
-python3 ./manuals_raw/ChunkCreationV4.py || echo "⚠️ ChunkCreationV4.py failed"
-python3 ./manuals_raw/EmbeddingCreation.py || echo "⚠️ EmbeddingCreation.py failed"
+python3 ./manuals_raw/pdf_extractor.py || echo "⚠️ pdf_extractor.py failed"
+python3 ./manuals_raw/chunk_creation.py || echo "⚠️ chunk_creation.py failed"
+python3 ./manuals_raw/embedding_creation.py || echo "⚠️ embedding_creation.py failed"
 #python3 ./test.py || echo "⚠️ test.py failed"
 
 set -e

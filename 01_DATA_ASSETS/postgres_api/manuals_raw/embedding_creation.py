@@ -31,4 +31,4 @@ conn.commit()
 cur.close()
 conn.close()
 
-print(f"{len(chunks)} Chunks erfolgreich in PostgreSQL gespeichert.")
+print(f"{len(chunks)} Chunks stored in PostgreSQL successfully.")

@@ -130,10 +130,8 @@ def process_folder(folder: Path, output_file: Path, doclist_path: Path):
     logging.info("Detected footers: %s", common_footers)
     aggregated = []
     for p, pages in file_page_map:
-        aggregated.append(f"\n\n=== START OF FILE: {p.name} ===\n\n")
         for page in pages:
             aggregated.append(medium_clean_page(page, common_headers, common_footers) + "\n")
-        aggregated.append(f"\n\n=== END OF FILE: {p.name} ===\n\n")
     final_text = "\n".join(ln.rstrip() for ln in "\n".join(aggregated).splitlines() if not re.match(r"^[\W_]{3,}$", ln.strip()))
     with output_file.open("w", encoding="utf-8") as f:
         f.write(final_text)
