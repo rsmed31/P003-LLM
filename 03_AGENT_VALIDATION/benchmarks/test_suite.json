@@ -1,0 +1,208 @@
+{
+  "test_suite_name": "cisco_ios_security_acl_aaa_ssh",
+  "description": "Queries and expected API responses for Cisco IOS security features (ACLs, AAA, 802.1X, SSH) based on Cisco IOS Security Configuration Guide.",
+  "tests": [
+    {
+      "id": "SEC-SSH-001",
+      "query": "On router R1, configure SSHv2-only remote management using a local admin user. Disable Telnet on VTY lines and set an exec-timeout of 10 minutes.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "hostname R1",
+              "ip domain-name example.com",
+              "username admin privilege 15 secret adminP@ss123",
+              "crypto key generate rsa modulus 2048",
+              "ip ssh version 2",
+              "line vty 0 4",
+              " transport input ssh",
+              " exec-timeout 10 0",
+              " login local"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "management_access",
+                "service": "SSH",
+                "requirements": [
+                  "Disable Telnet on VTY lines",
+                  "Use local user database for authentication",
+                  "Force SSH version 2",
+                  "Apply 10-minute exec-timeout on remote sessions"
+                ],
+                "endpoints": [
+                  {
+                    "role": "administrator",
+                    "id": "admin"
+                  },
+                  {
+                    "role": "router",
+                    "id": "R1"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-SSH-ACL-002",
+      "query": "On router R1, create a standard ACL 10 that permits only network 192.168.10.0/24 to access VTY lines over SSH and denies everything else. Apply it inbound on all VTY lines.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "access-list 10 permit 192.168.10.0 0.0.0.255",
+              "access-list 10 deny any",
+              "line vty 0 4",
+              " access-class 10 in",
+              " transport input ssh",
+              " login local"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "access_control",
+                "scope": "management_plane",
+                "description": "Restrict SSH VTY access to 192.168.10.0/24 only.",
+                "endpoints": [
+                  {
+                    "role": "management_clients_subnet",
+                    "id": "192.168.10.0/24"
+                  },
+                  {
+                    "role": "router",
+                    "id": "R1"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-ACL-DATA-003",
+      "query": "On router R1, configure an extended ACL named GUEST-FILTER that blocks HTTP and HTTPS from guest subnet 192.168.20.0/24 to server 10.10.10.10 but permits other traffic. Apply it inbound on interface GigabitEthernet0/1.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "ip access-list extended GUEST-FILTER",
+              " deny tcp 192.168.20.0 0.0.0.255 host 10.10.10.10 eq 80",
+              " deny tcp 192.168.20.0 0.0.0.255 host 10.10.10.10 eq 443",
+              " permit ip any any",
+              "interface GigabitEthernet0/1",
+              " description Guest VLAN interface",
+              " ip address 192.168.20.1 255.255.255.0",
+              " ip access-group GUEST-FILTER in"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "access_control",
+                "scope": "data_plane",
+                "description": "Block HTTP/HTTPS from guest subnet to protected server while allowing other traffic.",
+                "endpoints": [
+                  {
+                    "role": "subnet",
+                    "id": "192.168.20.0/24"
+                  },
+                  {
+                    "role": "server",
+                    "id": "10.10.10.10"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-AAA-RADIUS-004",
+      "query": "On router R1, enable AAA new-model, configure RADIUS server 10.0.0.5 with key radiusKEY, and set login authentication on VTY lines to use RADIUS with local fallback.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "aaa authentication login default group radius local",
+              "radius server RADIUS1",
+              " address ipv4 10.0.0.5 auth-port 1812 acct-port 1813",
+              " key radiusKEY",
+              "line vty 0 4",
+              " login authentication default",
+              " transport input ssh"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "authentication",
+                "method": "RADIUS_with_local_fallback",
+                "description": "Use central RADIUS for remote login, fallback to local users if RADIUS is unavailable.",
+                "endpoints": [
+                  {
+                    "role": "radius_server",
+                    "id": "10.0.0.5"
+                  },
+                  {
+                    "role": "router",
+                    "id": "R1"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SEC-8021X-005",
+      "query": "On router R1, configure 802.1X port-based authentication on interface GigabitEthernet0/2 for data VLAN 20 using RADIUS server 10.0.0.5 and AAA dot1x authentication. Assume VLAN 20 already exists.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "aaa new-model",
+              "aaa authentication dot1x default group radius",
+              "radius server RADIUS1",
+              " address ipv4 10.0.0.5 auth-port 1812 acct-port 1813",
+              " key radiusKEY",
+              "dot1x system-auth-control",
+              "interface GigabitEthernet0/2",
+              " switchport mode access",
+              " switchport access vlan 20",
+              " authentication port-control auto",
+              " dot1x pae authenticator"
+            ],
+            "protocol": "SECURITY",
+            "intent": [
+              {
+                "type": "port_access_control",
+                "method": "802.1X",
+                "description": "Require 802.1X authentication on access port using RADIUS server for VLAN 20.",
+                "endpoints": [
+                  {
+                    "role": "access_port",
+                    "id": "GigabitEthernet0/2"
+                  },
+                  {
+                    "role": "radius_server",
+                    "id": "10.0.0.5"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
