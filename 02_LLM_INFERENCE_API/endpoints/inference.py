@@ -73,6 +73,33 @@ def load_retrieval_config():
 
 RETRIEVAL_CONFIG = load_retrieval_config()
 
+def truncate_chunk(chunk: str, max_length: int = 800) -> str:
+    """Truncate chunk to maximum length to keep context manageable."""
+    if len(chunk) <= max_length:
+        return chunk
+    return chunk[:max_length] + "..."
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimation (1 token ≈ 4 characters)."""
+    return len(text) // 4
+
+def truncate_context_to_token_limit(context: str, max_tokens: int = 2000) -> str:
+    """Truncate context to stay within token limit."""
+    estimated_tokens = estimate_tokens(context)
+    if estimated_tokens <= max_tokens:
+        return context
+    
+    # Calculate target character count
+    target_chars = max_tokens * 4
+    truncated = context[:target_chars]
+    
+    # Try to break at a clean boundary
+    last_newline = truncated.rfind('\n\n')
+    if last_newline > target_chars * 0.8:  # Keep at least 80% of content
+        truncated = truncated[:last_newline]
+    
+    return truncated + "\n\n[Context truncated to fit token limit]"
+
 def detect_protocol_from_query(query: str) -> str:
     """
     Detect protocol mentioned in query to determine chunk count.
@@ -128,7 +155,7 @@ def callGemini(model, prompt):
 
 
 def callLlama(api_link, prompt, api_key=None, model=None):
-    """Call Llama (Ollama) using /api/chat for fully non-streaming JSON output."""
+    """Call Llama (Ollama) using /api/chat with streaming to prevent timeout."""
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -138,12 +165,35 @@ def callLlama(api_link, prompt, api_key=None, model=None):
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "stream": False  # enforce non-streaming
+        "stream": True,  # Use streaming to prevent timeout
+        "options": {
+            "num_ctx": 4096,
+            "num_predict": 512,
+            "temperature": 0.2
+        }
     }
-    response = requests.post(api_link, json=payload, headers=headers, timeout=120)
+    
+    # Use streaming request with longer timeout
+    response = requests.post(api_link, json=payload, headers=headers, timeout=300, stream=True)
     response.raise_for_status()
-    data = response.json()
-    return (data.get("message", {}) or {}).get("content", "").strip()
+    
+    # Accumulate streamed content
+    full_content = ""
+    for line in response.iter_lines():
+        if line:
+            try:
+                data = json.loads(line.decode('utf-8'))
+                # Extract content from streamed message
+                message = data.get("message", {})
+                if message and "content" in message:
+                    full_content += message["content"]
+                # Check if done
+                if data.get("done", False):
+                    break
+            except json.JSONDecodeError:
+                continue
+    
+    return full_content.strip()
 
 def clean_model_output(text: str) -> str:
     """
@@ -367,10 +417,12 @@ def generate(
                 
                 if data.get("found", False):
                     results = data.get("results", [])
-                    chunks = [item["text"] for item in results if "text" in item][:chunk_count]
+                    # Apply chunk length limit
+                    max_chunk_len = RETRIEVAL_CONFIG.get("max_chunk_length", 800)
+                    chunks = [truncate_chunk(item["text"], max_chunk_len) for item in results if "text" in item][:chunk_count]
                     retrieved_chunks = chunks  # Store for logging
                     
-                    print(f"[INFO] Retrieved {len(chunks)} chunks from service (limit: {chunk_count})")
+                    print(f"[INFO] Retrieved {len(chunks)} chunks from service (limit: {chunk_count}, max_chunk_len: {max_chunk_len})")
                     
                     # NEW: Strategy-based processing with structured context
                     if chunks and _LOCAL_ORCHESTRATOR and _RETRIEVAL_STRATEGY:
@@ -415,8 +467,13 @@ def generate(
                         
                         filtered_context = "\n\n".join(context_parts) if context_parts else ""
                         
+                        # Apply token limit to final context
+                        max_tokens = config.get('max_context_tokens', RETRIEVAL_CONFIG.get('max_context_tokens', 2000))
+                        filtered_context = truncate_context_to_token_limit(filtered_context, max_tokens)
+                        
                         # Log metrics
                         print(f"[INFO] ═══ RAG METRICS ═══")
+                        print(f"[INFO] Final context tokens (estimated): {estimate_tokens(filtered_context)}/{max_tokens}")
                         print(f"[INFO] Correlation Score: {correlation_result.get('correlation_score', 'N/A')}")
                         print(f"[INFO] Context Quality: {correlation_result.get('context_quality_score', 'N/A')}")
                         print(f"[INFO] Overall Confidence: {correlation_result.get('overall_confidence', 'N/A')}")

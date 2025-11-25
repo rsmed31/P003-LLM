@@ -84,24 +84,33 @@ def assemble_rag_prompt(
     parts = load_prompt_parts(system_file_path)
     combined_context = build_context_block(filtered_context_str, use_code_filter=True) or "No contextual data available."
     
-    # Simplified, more direct prompt structure
+    # Simplified, more direct prompt structure with STRONG emphasis on the query
     user_content = f"""{parts['CRITICAL_RULE_INSTRUCTION']}
 
 {parts['TASK_INSTRUCTION']}
 
 {parts['SITUATION_HEADER']}
+
+**CRITICAL: READ THE USER QUERY CAREFULLY AND GENERATE CONFIG FOR EXACTLY WHAT IS REQUESTED**
+
 {parts['CONFIG_GOAL_HEADER']} {user_query_str}
+
+**DO NOT generate default OSPF or routing configs unless specifically requested in the query above.**
+**DO NOT add routers R2, R3 unless mentioned in the query.**
+**ONLY configure what is explicitly requested in the query.**
 
 {parts['CONTEXT_BASE_HEADER']} {combined_context}
 
 {parts['SCHEMA_HEADER']}
 {parts['JSON_SCHEMA_BODY']}
 
-Remember: Output ONLY the JSON array starting with [ and ending with ]. No other text."""
+Remember: Output ONLY the JSON array for THE EXACT QUERY ABOVE. Start with [ and end with ]. No other text."""
 
     # Assemble final prompt - let model generate the opening bracket naturally
     final_prompt = f"""<|system|>
 {parts['SYSTEM_PROMPT']}
+
+CRITICAL INSTRUCTION: You must read the user query carefully and generate configuration ONLY for what is requested. Do not add default routing protocols or extra devices unless explicitly asked.
 </s>
 <|user|>
 {user_content.strip()}

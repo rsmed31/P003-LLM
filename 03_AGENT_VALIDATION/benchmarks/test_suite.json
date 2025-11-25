@@ -1,202 +1,25 @@
 {
-  "test_suite_name": "cisco_ios_security_acl_aaa_ssh",
-  "description": "Queries and expected API responses for Cisco IOS security features (ACLs, AAA, 802.1X, SSH) based on Cisco IOS Security Configuration Guide.",
+  "test_suite_name": "cisco_ios_basic_vlan_ospf_bgp",
+  "description": "Simple test cases for VLAN, OSPF, and BGP configuration to validate LLM network configuration generation.",
   "tests": [
     {
-      "id": "SEC-SSH-001",
-      "query": "On router R1, configure SSHv2-only remote management using a local admin user. Disable Telnet on VTY lines and set an exec-timeout of 10 minutes.",
+      "id": "VLAN-001",
+      "query": "On router R1, create VLAN 10 with name SALES.",
       "expected": {
         "response": [
           {
             "device_name": "R1",
             "configuration_mode_commands": [
-              "hostname R1",
-              "ip domain-name example.com",
-              "username admin privilege 15 secret adminP@ss123",
-              "crypto key generate rsa modulus 2048",
-              "ip ssh version 2",
-              "line vty 0 4",
-              " transport input ssh",
-              " exec-timeout 10 0",
-              " login local"
+              "vlan 10",
+              "name SALES"
             ],
-            "protocol": "SECURITY",
-            "intent": [
-              {
-                "type": "policy",
-                "service": "SSH",
-                "requirements": [
-                  "Disable Telnet on VTY lines",
-                  "Use local user database for authentication",
-                  "Force SSH version 2",
-                  "Apply 10-minute exec-timeout on remote sessions"
-                ],
-                "endpoints": [
-                  {
-                    "role": "administrator",
-                    "id": "admin"
-                  },
-                  {
-                    "role": "router",
-                    "id": "R1"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-SSH-ACL-002",
-      "query": "On router R1, create a standard ACL 10 that permits only network 192.168.10.0/24 to access VTY lines over SSH and denies everything else. Apply it inbound on all VTY lines.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "R1",
-            "configuration_mode_commands": [
-              "access-list 10 permit 192.168.10.0 0.0.0.255",
-              "access-list 10 deny any",
-              "line vty 0 4",
-              " access-class 10 in",
-              " transport input ssh",
-              " login local"
-            ],
-            "protocol": "SECURITY",
-            "intent": [
-              {
-                "type": "policy",
-                "scope": "management_plane",
-                "description": "Restrict SSH VTY access to 192.168.10.0/24 only.",
-                "endpoints": [
-                  {
-                    "role": "management_clients_subnet",
-                    "id": "192.168.10.0/24"
-                  },
-                  {
-                    "role": "router",
-                    "id": "R1"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-ACL-DATA-003",
-      "query": "On router R1, configure an extended ACL named GUEST-FILTER that blocks HTTP and HTTPS from guest subnet 192.168.20.0/24 to server 10.10.10.10 but permits other traffic. Apply it inbound on interface GigabitEthernet0/1.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "R1",
-            "configuration_mode_commands": [
-              "ip access-list extended GUEST-FILTER",
-              " deny tcp 192.168.20.0 0.0.0.255 host 10.10.10.10 eq 80",
-              " deny tcp 192.168.20.0 0.0.0.255 host 10.10.10.10 eq 443",
-              " permit ip any any",
-              "interface GigabitEthernet0/1",
-              " description Guest VLAN interface",
-              " ip address 192.168.20.1 255.255.255.0",
-              " ip access-group GUEST-FILTER in"
-            ],
-            "protocol": "SECURITY",
-            "intent": [
-              {
-                "type": "policy",
-                "scope": "data_plane",
-                "description": "Block HTTP/HTTPS from guest subnet to protected server while allowing other traffic.",
-                "endpoints": [
-                  {
-                    "role": "subnet",
-                    "id": "192.168.20.0/24"
-                  },
-                  {
-                    "role": "server",
-                    "id": "10.10.10.10"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-AAA-RADIUS-004",
-      "query": "On router R1, enable AAA new-model, configure RADIUS server 10.0.0.5 with key radiusKEY, and set login authentication on VTY lines to use RADIUS with local fallback.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "R1",
-            "configuration_mode_commands": [
-              "aaa new-model",
-              "aaa authentication login default group radius local",
-              "radius server RADIUS1",
-              " address ipv4 10.0.0.5 auth-port 1812 acct-port 1813",
-              " key radiusKEY",
-              "line vty 0 4",
-              " login authentication default",
-              " transport input ssh"
-            ],
-            "protocol": "SECURITY",
-            "intent": [
-              {
-                "type": "policy",
-                "method": "RADIUS_with_local_fallback",
-                "description": "Use central RADIUS for remote login, fallback to local users if RADIUS is unavailable.",
-                "endpoints": [
-                  {
-                    "role": "radius_server",
-                    "id": "10.0.0.5"
-                  },
-                  {
-                    "role": "router",
-                    "id": "R1"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-8021X-005",
-      "query": "On router R1, configure 802.1X port-based authentication on interface GigabitEthernet0/2 for data VLAN 20 using RADIUS server 10.0.0.5 and AAA dot1x authentication. Assume VLAN 20 already exists.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "R1",
-            "configuration_mode_commands": [
-              "aaa new-model",
-              "aaa authentication dot1x default group radius",
-              "radius server RADIUS1",
-              " address ipv4 10.0.0.5 auth-port 1812 acct-port 1813",
-              " key radiusKEY",
-              "dot1x system-auth-control",
-              "interface GigabitEthernet0/2",
-              " switchport mode access",
-              " switchport access vlan 20",
-              " authentication port-control auto",
-              " dot1x pae authenticator"
-            ],
-            "protocol": "SECURITY",
+            "protocol": "VLAN",
             "intent": [
               {
                 "type": "interface",
-                "method": "802.1X",
-                "description": "Require 802.1X authentication on access port using RADIUS server for VLAN 20.",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet0/2"
-                  },
-                  {
-                    "role": "radius_server",
-                    "id": "10.0.0.5"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "10"}
                 ]
               }
             ]
@@ -205,95 +28,32 @@
       }
     },
     {
-      "id": "SEC-8021X-006",
-      "query": "On switch SW1, configure 802.1X port-based authentication on interface FastEthernet0/5. Use a local username 'localuser' with password 'cisco' for authentication, and set the interface to be in a closed state until authentication succeeds.",
+      "id": "VLAN-002",
+      "query": "On router R1, create VLAN 20 with name ENGINEERING and VLAN 30 with name MARKETING.",
       "expected": {
         "response": [
           {
-            "device_name": "SW1",
+            "device_name": "R1",
             "configuration_mode_commands": [
-              "aaa new-model",
-              "username localuser secret cisco",
-              "aaa authentication dot1x default local",
-              "dot1x system-auth-control",
-              "interface FastEthernet0/5",
-              " switchport mode access",
-              " authentication port-control auto",
-              " dot1x pae authenticator"
+              "vlan 20",
+              "name ENGINEERING",
+              "vlan 30",
+              "name MARKETING"
             ],
-            "protocol": "SECURITY",
+            "protocol": "VLAN",
             "intent": [
               {
-                "type": "port_access_control",
-                "method": "802.1X",
-                "description": "Require 802.1X authentication on access port using local database.",
+                "type": "interface",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "FastEthernet0/5"
-                  },
-                  {
-                    "role": "local_user_database",
-                    "id": "localuser"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "20"}
                 ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-8021X-007",
-      "query": "On switch SW2, configure multi-domain authentication on interface GigabitEthernet1/0/1 to allow a voice VLAN 10 and a data VLAN 30 to coexist, with 802.1X for data and MAC Authentication Bypass (MAB) for the voice IP phone. The voice VLAN 10 and data VLAN 30 already exist. Use RADIUS server 10.0.0.10 and a key of 'voiceKEY' for voice traffic and 'dataKEY' for data traffic.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "SW2",
-            "configuration_mode_commands": [
-              "aaa new-model",
-              "aaa authentication dot1x default group radius",
-              "aaa authentication mab default group radius",
-              "radius server RADIUS_VOICE",
-              " address ipv4 10.0.0.10 auth-port 1812 acct-port 1813",
-              " key voiceKEY",
-              "radius server RADIUS_DATA",
-              " address ipv4 10.0.0.10 auth-port 1812 acct-port 1813",
-              " key dataKEY",
-              "dot1x system-auth-control",
-              "interface GigabitEthernet1/0/1",
-              " switchport mode access",
-              " switchport access vlan 30",
-              " switchport voice vlan 10",
-              " authentication port-control auto",
-              " authentication order mab dot1x",
-              " authentication priority mab dot1x",
-              " mab",
-              " dot1x pae authenticator"
-            ],
-            "protocol": "SECURITY",
-            "intent": [
+              },
               {
-                "type": "port_access_control",
-                "method": "multi-domain_authentication",
-                "description": "Configure multi-domain authentication on an access port, prioritizing MAB (for voice) then 802.1X (for data), using RADIUS servers for both domains.",
+                "type": "interface",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet1/0/1"
-                  },
-                  {
-                    "role": "radius_server",
-                    "id": "10.0.0.10"
-                  },
-                  {
-                    "role": "data_vlan",
-                    "id": "30"
-                  },
-                  {
-                    "role": "voice_vlan",
-                    "id": "10"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "30"}
                 ]
               }
             ]
@@ -302,47 +62,25 @@
       }
     },
     {
-      "id": "SEC-8021X-008",
-      "query": "On switch SW3, configure interface GigabitEthernet0/1 to use an **open** authentication mode. If 802.1X authentication fails, the host should still be granted access, but placed into the **critical** VLAN 99. Use RADIUS server 10.0.0.15 for authentication.",
+      "id": "VLAN-003",
+      "query": "On router R1, assign interface GigabitEthernet0/1 to VLAN 10 as an access port.",
       "expected": {
         "response": [
           {
-            "device_name": "SW3",
+            "device_name": "R1",
             "configuration_mode_commands": [
-              "aaa new-model",
-              "aaa authentication dot1x default group radius",
-              "radius server RADIUS_CRIT",
-              " address ipv4 10.0.0.15 auth-port 1812 acct-port 1813",
-              " key secretKEY",
-              "dot1x system-auth-control",
-              "vlan 99",
-              " name CRITICAL_AUTH_FAIL",
               "interface GigabitEthernet0/1",
-              " switchport mode access",
-              " authentication port-control auto",
-              " authentication event critical action authorize",
-              " authentication event critical vlan 99",
-              " dot1x pae authenticator"
+              "switchport mode access",
+              "switchport access vlan 10",
+              "no shutdown"
             ],
-            "protocol": "SECURITY",
+            "protocol": "VLAN",
             "intent": [
               {
-                "type": "port_access_control",
-                "method": "802.1X_critical_vlan",
-                "description": "Configure 802.1X with critical authentication/failure VLAN.",
+                "type": "interface",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet0/1"
-                  },
-                  {
-                    "role": "critical_vlan",
-                    "id": "99"
-                  },
-                  {
-                    "role": "radius_server",
-                    "id": "10.0.0.15"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "10"}
                 ]
               }
             ]
@@ -351,33 +89,23 @@
       }
     },
     {
-      "id": "SEC-8021X-009",
-      "query": "On switch SW4, configure 802.1X on interface GigabitEthernet1/0/5 to allow only **one** host (single host mode) to be authenticated, and once authenticated, all traffic from that host's MAC address is allowed.",
+      "id": "OSPF-001",
+      "query": "On router R1, configure OSPF process 1 and advertise network 10.1.12.0/30 in area 0.",
       "expected": {
         "response": [
           {
-            "device_name": "SW4",
+            "device_name": "R1",
             "configuration_mode_commands": [
-              "aaa new-model",
-              "aaa authentication dot1x default group radius",
-              "dot1x system-auth-control",
-              "interface GigabitEthernet1/0/5",
-              " switchport mode access",
-              " authentication port-control auto",
-              " authentication host-mode single-host",
-              " dot1x pae authenticator"
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
             ],
-            "protocol": "SECURITY",
+            "protocol": "OSPF",
             "intent": [
               {
-                "type": "port_access_control",
-                "method": "802.1X_host_mode",
-                "description": "Configure 802.1X in single-host mode.",
+                "type": "adjacency",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet1/0/5"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "network", "id": "10.1.12.0/30"}
                 ]
               }
             ]
@@ -386,34 +114,26 @@
       }
     },
     {
-      "id": "SEC-8021X-010",
-      "query": "On switch SW5, configure 802.1X on interface FastEthernet0/15 to enable **multi-auth** mode, allowing multiple hosts to authenticate individually on the same port, and set the interface to **close** if a violation occurs.",
+      "id": "OSPF-002",
+      "query": "On router R1, configure interface GigabitEthernet0/0 with IP 10.1.12.1/30 and enable OSPF area 0 on it.",
       "expected": {
         "response": [
           {
-            "device_name": "SW5",
+            "device_name": "R1",
             "configuration_mode_commands": [
-              "aaa new-model",
-              "aaa authentication dot1x default group radius",
-              "dot1x system-auth-control",
-              "interface FastEthernet0/15",
-              " switchport mode access",
-              " authentication port-control auto",
-              " authentication host-mode multi-auth",
-              " authentication violation restrict",
-              " dot1x pae authenticator"
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.1 255.255.255.252",
+              "no shutdown",
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
             ],
-            "protocol": "SECURITY",
+            "protocol": "OSPF",
             "intent": [
               {
-                "type": "port_access_control",
-                "method": "802.1X_multi_auth",
-                "description": "Configure 802.1X in multi-auth host mode with violation restrict action.",
+                "type": "adjacency",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "FastEthernet0/15"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
                 ]
               }
             ]
@@ -422,179 +142,46 @@
       }
     },
     {
-      "id": "SEC-8021X-011",
-      "query": "On switch SW6, configure a global RADIUS server group named 'AUTH_SERVERS' to include servers 192.168.1.10 and 192.168.1.11, with a key of 'shared_secret' for all servers.",
+      "id": "OSPF-003",
+      "query": "Configure OSPF between R1 and R2. R1 uses 10.1.12.1/30 on Gi0/0, R2 uses 10.1.12.2/30 on Gi0/0. Both in area 0.",
       "expected": {
         "response": [
           {
-            "device_name": "SW6",
+            "device_name": "R1",
             "configuration_mode_commands": [
-              "aaa new-model",
-              "radius server RAD10",
-              " address ipv4 192.168.1.10 auth-port 1812 acct-port 1813",
-              " key shared_secret",
-              "radius server RAD11",
-              " address ipv4 192.168.1.11 auth-port 1812 acct-port 1813",
-              " key shared_secret",
-              "aaa group server radius AUTH_SERVERS",
-              " server name RAD10",
-              " server name RAD11",
-              "aaa authentication dot1x default group AUTH_SERVERS"
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.1 255.255.255.252",
+              "no shutdown",
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
             ],
-            "protocol": "SECURITY",
+            "protocol": "OSPF",
             "intent": [
               {
-                "type": "aaa_radius_group",
-                "method": "RADIUS_Server_Group",
-                "description": "Configure a RADIUS server group for AAA services.",
+                "type": "adjacency",
                 "endpoints": [
-                  {
-                    "role": "radius_server",
-                    "id": "192.168.1.10"
-                  },
-                  {
-                    "role": "radius_server",
-                    "id": "192.168.1.11"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
                 ]
               }
             ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-8021X-012",
-      "query": "On switch SW7, configure 802.1X on interface GigabitEthernet0/8 with a **re-authentication** period of 1800 seconds and set the **timeout** for supplicant response to 10 seconds.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "SW7",
-            "configuration_mode_commands": [
-              "aaa new-model",
-              "dot1x system-auth-control",
-              "interface GigabitEthernet0/8",
-              " switchport mode access",
-              " authentication port-control auto",
-              " dot1x pae authenticator",
-              " dot1x timeout reauth-period 1800",
-              " dot1x timeout supp-timeout 10"
-            ],
-            "protocol": "SECURITY",
-            "intent": [
-              {
-                "type": "port_access_control",
-                "method": "802.1X_timers",
-                "description": "Adjust 802.1X re-authentication and supplicant response timers.",
-                "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet0/8"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-8021X-013",
-      "query": "On switch SW8, globally enable MAC Authentication Bypass (MAB) and configure the device to fall back to MAB if 802.1X fails, using a local database for MAB authentication.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "SW8",
-            "configuration_mode_commands": [
-              "aaa new-model",
-              "aaa authentication dot1x default local",
-              "aaa authentication mab default local",
-              "dot1x system-auth-control",
-              "mab enable",
-              "interface range GigabitEthernet0/1 - 24",
-              " authentication port-control auto",
-              " authentication order dot1x mab",
-              " authentication priority dot1x mab"
-            ],
-            "protocol": "SECURITY",
-            "intent": [
-              {
-                "type": "port_access_control",
-                "method": "MAB_global_enable",
-                "description": "Globally enable MAB and set MAB as fallback authentication method.",
-                "endpoints": []
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-8021X-014",
-      "query": "On switch SW9, configure interface GigabitEthernet0/10 to bypass 802.1X and immediately authorize any connected client if no EAP traffic is detected after 5 seconds.",
-      "expected": {
-        "response": [
-          {
-            "device_name": "SW9",
-            "configuration_mode_commands": [
-              "aaa new-model",
-              "dot1x system-auth-control",
-              "interface GigabitEthernet0/10",
-              " switchport mode access",
-              " authentication port-control auto",
-              " dot1x pae authenticator",
-              " authentication timer inactivity 5"
-            ],
-            "protocol": "SECURITY",
-            "intent": [
-              {
-                "type": "port_access_control",
-                "method": "802.1X_no_eap_bypass",
-                "description": "Configure 802.1X to authorize the port if no EAP traffic is detected within a specified timeout.",
-                "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet0/10"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "SEC-8021X-015",
-      "query": "On router R2, configure Web Authentication (WebAuth) as a fallback mechanism on interface GigabitEthernet0/0. If 802.1X fails, the client should be redirected to a web portal.",
-      "expected": {
-        "response": [
+          },
           {
             "device_name": "R2",
             "configuration_mode_commands": [
-              "aaa new-model",
-              "ip http server",
-              "ip http secure-server",
-              "aaa authentication dot1x default group radius",
-              "aaa authorization network default group radius",
-              "dot1x system-auth-control",
               "interface GigabitEthernet0/0",
-              " ip address 10.1.1.1 255.255.255.0",
-              " authentication port-control auto",
-              " authentication order dot1x webauth",
-              " authentication priority dot1x webauth",
-              " dot1x pae authenticator"
+              "ip address 10.1.12.2 255.255.255.252",
+              "no shutdown",
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
             ],
-            "protocol": "SECURITY",
+            "protocol": "OSPF",
             "intent": [
               {
-                "type": "port_access_control",
-                "method": "WebAuth_fallback",
-                "description": "Configure Web Authentication as a fallback if 802.1X fails.",
+                "type": "adjacency",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet0/0"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
                 ]
               }
             ]
@@ -603,35 +190,23 @@
       }
     },
     {
-      "id": "SEC-8021X-016",
-      "query": "On switch SW10, configure 802.1X to use **multi-domain** mode on port GigabitEthernet0/20, and apply an Authorization Profile named 'VOICE_PROFILE' specifically for the voice domain.",
+      "id": "OSPF-004",
+      "query": "On router R1, set the OSPF router-id to 1.1.1.1.",
       "expected": {
         "response": [
           {
-            "device_name": "SW10",
+            "device_name": "R1",
             "configuration_mode_commands": [
-              "aaa new-model",
-              "dot1x system-auth-control",
-              "interface GigabitEthernet0/20",
-              " switchport mode access",
-              " authentication port-control auto",
-              " authentication host-mode multi-domain",
-              " authentication open",
-              " dot1x pae authenticator",
-              " authentication control-direction in",
-              " authentication template VOICE_PROFILE domain voice"
+              "router ospf 1",
+              "router-id 1.1.1.1"
             ],
-            "protocol": "SECURITY",
+            "protocol": "OSPF",
             "intent": [
               {
-                "type": "port_access_control",
-                "method": "802.1X_multi_domain",
-                "description": "Configure 802.1X in multi-domain mode and apply an authorization template to the voice domain.",
+                "type": "interface",
                 "endpoints": [
-                  {
-                    "role": "access_port",
-                    "id": "GigabitEthernet0/20"
-                  }
+                  {"role": "router", "id": "R1"},
+                  {"role": "router-id", "id": "1.1.1.1"}
                 ]
               }
             ]
@@ -640,23 +215,148 @@
       }
     },
     {
-      "id": "SEC-8021X-017",
-      "query": "On switch SW11, globally disable the exchange of EAPOL (EAP over LAN) messages when 802.1X is enabled on any port.",
+      "id": "BGP-001",
+      "query": "On router R1, configure BGP with AS number 65001.",
       "expected": {
         "response": [
           {
-            "device_name": "SW11",
+            "device_name": "R1",
             "configuration_mode_commands": [
-              "dot1x system-auth-control",
-              "no dot1x enable"
+              "router bgp 65001"
             ],
-            "protocol": "SECURITY",
+            "protocol": "BGP",
             "intent": [
               {
-                "type": "port_access_control",
-                "method": "802.1X_global_disable",
-                "description": "Globally disable 802.1X EAPOL transmission.",
-                "endpoints": []
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "autonomous-system", "id": "65001"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "BGP-002",
+      "query": "On router R1 in AS 65001, configure a BGP neighbor 10.1.12.2 in AS 65002.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "router bgp 65001",
+              "neighbor 10.1.12.2 remote-as 65002"
+            ],
+            "protocol": "BGP",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "10.1.12.2"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "BGP-003",
+      "query": "Configure eBGP between R1 (AS 65001, IP 10.1.12.1) and R2 (AS 65002, IP 10.1.12.2) on their Gi0/0 interfaces.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.1 255.255.255.252",
+              "no shutdown",
+              "router bgp 65001",
+              "neighbor 10.1.12.2 remote-as 65002"
+            ],
+            "protocol": "BGP",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
+                ]
+              }
+            ]
+          },
+          {
+            "device_name": "R2",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.2 255.255.255.252",
+              "no shutdown",
+              "router bgp 65002",
+              "neighbor 10.1.12.1 remote-as 65001"
+            ],
+            "protocol": "BGP",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INTERFACE-001",
+      "query": "On router R1, configure interface GigabitEthernet0/0 with IP address 192.168.1.1/24.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 192.168.1.1 255.255.255.0",
+              "no shutdown"
+            ],
+            "protocol": "INTERFACE",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "interface", "id": "GigabitEthernet0/0"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INTERFACE-002",
+      "query": "On router R1, configure a loopback interface Loopback0 with IP 1.1.1.1/32.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface Loopback0",
+              "ip address 1.1.1.1 255.255.255.255",
+              "no shutdown"
+            ],
+            "protocol": "INTERFACE",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "interface", "id": "Loopback0"}
+                ]
               }
             ]
           }

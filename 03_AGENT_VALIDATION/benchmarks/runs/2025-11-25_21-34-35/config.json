@@ -1,6 +1,6 @@
 {
-  "test_suite_name": "cisco_ios_security_acl_aaa_ssh",
-  "description": "Queries and expected API responses for Cisco IOS security features (ACLs, AAA, 802.1X, SSH) based on Cisco IOS Security Configuration Guide.",
+  "test_suite_name": "cisco_ios_basic_vlan_ospf_bgp",
+  "description": "Simple test cases for VLAN, OSPF, and BGP configuration to validate LLM network configuration generation.",
   "benchmark_configs": [
     {
       "model": "gemini",
@@ -34,6 +34,6 @@
     }
   ],
   "test_suite_path": "C:\\Users\\enmoh\\Desktop\\P003-LLM\\03_AGENT_VALIDATION\\benchmarks\\test_suite.json",
-  "timestamp": "2025-11-25T15:18:32.173349",
-  "total_tests": 5
+  "timestamp": "2025-11-25T21:34:35.043055",
+  "total_tests": 12
 }

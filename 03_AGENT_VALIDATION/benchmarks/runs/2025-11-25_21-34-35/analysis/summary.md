@@ -1,0 +1,196 @@
+# BENCHMARK ANALYSIS SUMMARY
+
+Run Directory: C:\Users\enmoh\Desktop\P003-LLM\03_AGENT_VALIDATION\benchmarks\runs\2025-11-25_21-34-35
+Analysis Date: 2025-11-25_21-34-35
+
+
+## RAG & CHUNKING CONFIGURATION
+
+Chunk Size: 800
+Chunk Overlap: unknown
+Retriever Top-K: 5
+Retriever Type: hybrid_code_theory
+
+
+## OVERALL PERFORMANCE METRICS
+
+
+
+## GEMINI (RAG OFF):
+
+  Commands F1:       0.8810 ± 0.3036
+  Exact Match:       0.0000
+  Precision:         0.8889
+  Recall:            0.8750
+  Batfish Pass Rate: 0.1667
+  AI Verdict Pass:   1.0000 (GLOBAL FAILURE METRIC)
+  Number of Tests:   12
+
+
+## GEMINI (RAG ON):
+
+  Commands F1:       0.8810 ± 0.3036
+  Exact Match:       0.0000
+  Precision:         0.8889
+  Recall:            0.8750
+  Batfish Pass Rate: 0.1667
+  AI Verdict Pass:   0.8333 (GLOBAL FAILURE METRIC)
+  Number of Tests:   12
+
+
+## LLAMA (RAG OFF):
+
+  Commands F1:       0.5374 ± 0.3490
+  Exact Match:       0.0000
+  Precision:         0.5155
+  Recall:            0.6389
+  Batfish Pass Rate: 0.3333
+  AI Verdict Pass:   0.6667 (GLOBAL FAILURE METRIC)
+  Number of Tests:   12
+
+
+## LLAMA (RAG ON):
+
+  Commands F1:       0.5348 ± 0.3647
+  Exact Match:       0.0000
+  Precision:         0.5108
+  Recall:            0.6292
+  Batfish Pass Rate: 0.5000
+  AI Verdict Pass:   0.7000 (GLOBAL FAILURE METRIC)
+  Number of Tests:   20
+
+
+
+## RAG IMPACT ANALYSIS
+
+
+
+## GEMINI:
+
+  F1 Delta (RAG On - RAG Off):          +0.0000
+  Exact Match Delta:                    +0.0000
+  Batfish Pass Delta:                   +0.0000
+  AI Verdict Pass Delta:                -0.1667 (GLOBAL METRIC)
+  F1 with RAG:    0.8810
+  F1 without RAG: 0.8810
+
+
+## LLAMA:
+
+  F1 Delta (RAG On - RAG Off):          -0.0026
+  Exact Match Delta:                    +0.0000
+  Batfish Pass Delta:                   +0.1667
+  AI Verdict Pass Delta:                +0.0333 (GLOBAL METRIC)
+  F1 with RAG:    0.5348
+  F1 without RAG: 0.5374
+
+
+**BEST MODEL FOR RAG: GEMINI with F1 improvement of +0.0000**
+
+
+
+5 HARDEST TESTS (Lowest Avg F1)
+
+
+## BGP-002:
+
+  Avg F1 Score:         0.0000
+  Avg Batfish Pass:     0.2000
+  Avg AI Verdict Pass:  0.8000
+  Best Combination:     gemini_ragon (F1: 0.0000)
+
+
+## BGP-001:
+
+  Avg F1 Score:         0.4800
+  Avg Batfish Pass:     0.0000
+  Avg AI Verdict Pass:  1.0000
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+## BGP-003:
+
+  Avg F1 Score:         0.5714
+  Avg Batfish Pass:     1.0000
+  Avg AI Verdict Pass:  1.0000
+  Best Combination:     gemini_ragon (F1: 0.5714)
+
+
+## OSPF-004:
+
+  Avg F1 Score:         0.6250
+  Avg Batfish Pass:     0.5000
+  Avg AI Verdict Pass:  0.2500
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+## VLAN-003:
+
+  Avg F1 Score:         0.6686
+  Avg Batfish Pass:     0.2000
+  Avg AI Verdict Pass:  0.4000
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+5 EASIEST TESTS (Highest Avg F1)
+
+
+## OSPF-003:
+
+  Avg F1 Score:         1.0000
+  Avg Batfish Pass:     1.0000
+  Avg AI Verdict Pass:  1.0000
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+## OSPF-002:
+
+  Avg F1 Score:         0.9773
+  Avg Batfish Pass:     0.2500
+  Avg AI Verdict Pass:  1.0000
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+## INTERFACE-002:
+
+  Avg F1 Score:         0.9167
+  Avg Batfish Pass:     0.0000
+  Avg AI Verdict Pass:  1.0000
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+## INTERFACE-001:
+
+  Avg F1 Score:         0.8667
+  Avg Batfish Pass:     0.0000
+  Avg AI Verdict Pass:  1.0000
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+## VLAN-002:
+
+  Avg F1 Score:         0.8333
+  Avg Batfish Pass:     0.0000
+  Avg AI Verdict Pass:  0.2500
+  Best Combination:     gemini_ragon (F1: 1.0000)
+
+
+
+## KEY INSIGHTS
+
+1. Overall RAG Impact: Negative
+   - Average F1 with RAG:    0.7079
+   - Average F1 without RAG: 0.7092
+   - Improvement:            -0.0013 (-0.13%)
+
+2. Chunking Configuration Impact:
+   - Current chunk size of 800 with overlap of
+     unknown appears to be suboptimal
+   - Retrieving top-5 chunks per query
+
+3. Model Performance:
+   - GEMINI shows the best absolute performance with RAG
+
+## (F1: 0.8810)
+
+   - GEMINI benefits most from RAG (improvement: +0.0000)

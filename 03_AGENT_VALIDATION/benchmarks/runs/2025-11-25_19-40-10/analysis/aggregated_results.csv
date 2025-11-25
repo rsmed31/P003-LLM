@@ -1,0 +1,5 @@
+model,rag_enabled,exact_match_mean,exact_match_std,exact_match_count,commands_precision_mean,commands_precision_std,commands_recall_mean,commands_recall_std,commands_f1_mean,commands_f1_std,intent_match_mean,intent_match_std,batfish_pass_mean,batfish_pass_std
+gemini,False,0.0,0.0,17,0.39401176470588234,0.26674137962254973,0.38620000000000004,0.2338284093090487,0.38027058823529414,0.23991287419786866,0.0,0.0,1.0,0.0
+gemini,True,0.0,0.0,17,0.3855470588235294,0.22762064690413922,0.3474,0.21339793227676787,0.35746470588235296,0.21186108639028214,0.0,0.0,1.0,0.0
+llama,False,0.0,0.0,7,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0
+llama,True,0.0,0.0,17,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0

@@ -48,22 +48,37 @@ def call_model(model_name: str, query: str, rag_enabled: bool, loopback_enabled:
     """
     Call an LLM model with a given query and RAG mode using the agent service.
     
+    When loopback_enabled=True, ALWAYS runs both:
+    1. Primary attempt (with rag_enabled setting)
+    2. Loopback attempt (RAG disabled) - only if primary fails
+    
+    Returns BOTH results for comparison to measure loopback improvement.
+    
     Args:
         model_name: Name of the model to call (e.g., "gemini", "llama")
         query: The network configuration query to send to the model
-        rag_enabled: Whether to enable RAG (Retrieval-Augmented Generation)
+        rag_enabled: Whether to enable RAG for primary attempt
         loopback_enabled: Whether to enable loopback fallback on failure
     
     Returns:
-        Dict containing model response, validation, and verdict:
+        Dict containing primary and optionally loopback results:
         {
             "model": str,
-            "response": List[Dict],
             "rag_enabled": bool,
             "loopback_enabled": bool,
-            "validation": Dict,
-            "verdict": Dict,
-            "config": str,
+            "primary": {
+                "response": List[Dict],
+                "validation": Dict,
+                "verdict": Dict,
+                "config": str
+            },
+            "loopback": {  # Only present if loopback was triggered
+                "response": List[Dict],
+                "validation": Dict,
+                "verdict": Dict,
+                "config": str
+            },
+            "used_loopback": bool,  # True if loopback result was better
             "error": Optional[str]
         }
     """
@@ -71,59 +86,110 @@ def call_model(model_name: str, query: str, rag_enabled: bool, loopback_enabled:
     logger.debug(f"Query: {query}")
     
     try:
-        # Step 1: Generate configuration using T2
-        gen_result = call_t2_generate(query, model=model_name, rag_enabled=rag_enabled)
+        # PRIMARY ATTEMPT
+        logger.info(f"  → Step 1/4: PRIMARY - Generating configuration with T2 (RAG={'ON' if rag_enabled else 'OFF'})...")
+        gen_result_primary = call_t2_generate(query, model=model_name, rag_enabled=rag_enabled)
+        logger.info(f"  ✓ Step 1/4: PRIMARY - Configuration generated")
         
-        # Step 2: Validate with T3
-        validation = call_t3_validate(gen_result["evaluate_payload"])
+        logger.info(f"  → Step 2/4: PRIMARY - Validating with Batfish (T3)...")
+        validation_primary = call_t3_validate(gen_result_primary["evaluate_payload"])
+        logger.info(f"  ✓ Step 2/4: PRIMARY - Validation completed")
         
-        # Step 3: Get AI verdict
-        verdict_text = verdict_chain.invoke({
+        logger.info(f"  → Step 3/4: PRIMARY - Getting AI verdict...")
+        verdict_text_primary = verdict_chain.invoke({
             "query": query,
-            "config": gen_result["joined_config"],
-            "validation_json": json.dumps(validation, ensure_ascii=False)
+            "config": gen_result_primary["joined_config"],
+            "validation_json": json.dumps(validation_primary, ensure_ascii=False)
         })
-        verdict_status = _parse_verdict_status(verdict_text)
+        verdict_status_primary = _parse_verdict_status(verdict_text_primary)
+        logger.info(f"  ✓ Step 3/4: PRIMARY - Verdict: {verdict_status_primary}")
         
-        # Step 4: Loopback retry if enabled and failed
-        loopback_attempted = False
-        if loopback_enabled and verdict_status == "FAIL":
-            logger.info(f"Loopback triggered for {model_name} - retrying without RAG")
-            loopback_attempted = True
-            
-            # Retry with RAG disabled
-            gen_result = call_t2_generate(query, model=model_name, rag_enabled=False)
-            validation = call_t3_validate(gen_result["evaluate_payload"])
-            verdict_text = verdict_chain.invoke({
-                "query": query,
-                "config": gen_result["joined_config"],
-                "validation_json": json.dumps(validation, ensure_ascii=False)
-            })
-            verdict_status = _parse_verdict_status(verdict_text)
-        
-        # Parse response from T2 result
-        response = gen_result.get("evaluate_payload", {}).get("changes", {})
-        response_list = []
-        for device_name, commands in response.items():
-            response_list.append({
+        # Parse primary response
+        response_primary = gen_result_primary.get("evaluate_payload", {}).get("changes", {})
+        response_list_primary = []
+        for device_name, commands in response_primary.items():
+            response_list_primary.append({
                 "device_name": device_name,
                 "configuration_mode_commands": commands,
                 "protocol": "GENERATED",
                 "intent": []
             })
         
+        # Build primary result
+        primary_result = {
+            "response": response_list_primary,
+            "validation": validation_primary,
+            "verdict": {
+                "text": verdict_text_primary,
+                "status": verdict_status_primary
+            },
+            "config": gen_result_primary["joined_config"]
+        }
+        
+        # LOOPBACK ATTEMPT (only if enabled AND primary failed)
+        loopback_result = None
+        used_loopback = False
+        loopback_attempted = False
+        
+        if loopback_enabled and verdict_status_primary == "FAIL":
+            logger.info(f"  → Step 4/4: LOOPBACK - Primary failed, retrying without RAG...")
+            loopback_attempted = True
+            
+            logger.info(f"  → LOOPBACK: Regenerating configuration (RAG OFF)...")
+            gen_result_loopback = call_t2_generate(query, model=model_name, rag_enabled=False)
+            logger.info(f"  ✓ LOOPBACK: Configuration generated")
+            
+            logger.info(f"  → LOOPBACK: Validating with Batfish...")
+            validation_loopback = call_t3_validate(gen_result_loopback["evaluate_payload"])
+            logger.info(f"  ✓ LOOPBACK: Validation completed")
+            
+            logger.info(f"  → LOOPBACK: Getting AI verdict...")
+            verdict_text_loopback = verdict_chain.invoke({
+                "query": query,
+                "config": gen_result_loopback["joined_config"],
+                "validation_json": json.dumps(validation_loopback, ensure_ascii=False)
+            })
+            verdict_status_loopback = _parse_verdict_status(verdict_text_loopback)
+            logger.info(f"  ✓ LOOPBACK: Verdict: {verdict_status_loopback}")
+            
+            # Parse loopback response
+            response_loopback = gen_result_loopback.get("evaluate_payload", {}).get("changes", {})
+            response_list_loopback = []
+            for device_name, commands in response_loopback.items():
+                response_list_loopback.append({
+                    "device_name": device_name,
+                    "configuration_mode_commands": commands,
+                    "protocol": "GENERATED",
+                    "intent": []
+                })
+            
+            loopback_result = {
+                "response": response_list_loopback,
+                "validation": validation_loopback,
+                "verdict": {
+                    "text": verdict_text_loopback,
+                    "status": verdict_status_loopback
+                },
+                "config": gen_result_loopback["joined_config"]
+            }
+            
+            # Determine if loopback improved
+            if verdict_status_loopback == "PASS":
+                used_loopback = True
+                logger.info(f"  ✓ LOOPBACK: Improved! (FAIL → PASS)")
+            else:
+                logger.info(f"  ⚠ LOOPBACK: No improvement (both FAIL)")
+        else:
+            logger.info(f"  ✓ Step 4/4: No loopback needed (primary={'PASS' if verdict_status_primary=='PASS' else 'FAIL'})")
+        
         return {
             "model": model_name,
-            "response": response_list,
             "rag_enabled": rag_enabled,
             "loopback_enabled": loopback_enabled,
             "loopback_attempted": loopback_attempted,
-            "validation": validation,
-            "verdict": {
-                "text": verdict_text,
-                "status": verdict_status
-            },
-            "config": gen_result["joined_config"],
+            "used_loopback": used_loopback,
+            "primary": primary_result,
+            "loopback": loopback_result,
             "error": None
         }
         
@@ -316,7 +382,7 @@ def validate_with_batfish(test_id: str,
             "summary": Dict
         }
     """
-    logger.info(f"Extracting Batfish validation for test {test_id}")
+    logger.info(f"  → Extracting Batfish validation results for test {test_id}...")
     
     validation = model_output.get("validation", {})
     
@@ -355,6 +421,8 @@ def validate_with_batfish(test_id: str,
                     "message": f"{reach.get('src')} -> {reach.get('dst')}: {reach.get('error', 'Failed')}"
                 })
     
+    logger.info(f"  ✓ Batfish validation extracted - Pass: {batfish_pass}, Violations: {len(violations)}")
+    
     return {
         "batfish_pass": batfish_pass,
         "violations": violations,
@@ -365,57 +433,86 @@ def validate_with_batfish(test_id: str,
 
 def compute_metrics(test_case: Dict, 
                    model_output: Dict, 
-                   batfish_result: Dict) -> Dict[str, Any]:
+                   result_type: str = "primary") -> Dict[str, Any]:
     """
     Compute all metrics for a single test case and model output.
     
     Args:
         test_case: Test case from test suite
-        model_output: Model's generated output
-        batfish_result: Results from Batfish validation
+        model_output: Model's generated output (with 'primary' and optionally 'loopback' keys)
+        result_type: "primary" or "loopback" - which result to compute metrics for
     
     Returns:
         Dict containing all computed metrics
     """
     expected = test_case["expected"]
     
+    # Extract the appropriate result
+    if result_type == "loopback":
+        if not model_output.get("loopback"):
+            return None  # No loopback result available
+        result_data = model_output["loopback"]
+        rag_enabled = False  # Loopback always disables RAG
+    else:
+        result_data = model_output["primary"]
+        rag_enabled = model_output.get("rag_enabled", False)
+    
+    logger.info(f"  → Computing metrics for {result_type} result...")
+    
     # Extract commands
     expected_commands = extract_all_commands(expected.get("response", []))
-    predicted_commands = extract_all_commands(model_output.get("response", []))
+    predicted_commands = extract_all_commands(result_data.get("response", []))
     
     # Extract intents
     expected_intents = extract_all_intents(expected.get("response", []))
-    predicted_intents = extract_all_intents(model_output.get("response", []))
+    predicted_intents = extract_all_intents(result_data.get("response", []))
     
     # Compute metrics
-    exact_match = compute_exact_match(expected, model_output)
+    exact_match = compute_exact_match(expected, {"response": result_data.get("response", [])})
     command_metrics = compute_command_metrics(expected_commands, predicted_commands)
     intent_match = compare_intents(expected_intents, predicted_intents)
     
     # Extract verdict information
-    verdict = model_output.get("verdict", {})
+    verdict = result_data.get("verdict", {})
     verdict_status = verdict.get("status", "UNKNOWN")
     verdict_text = verdict.get("text", "")
     
     # Extract validation details
-    validation = model_output.get("validation", {})
+    validation = result_data.get("validation", {})
     validation_result = validation.get("result", "UNKNOWN")
     validation_status = validation.get("status", "UNKNOWN")
+    batfish_pass = 1 if validation_result == "OK" else 0
+    
+    # Count violations
+    summary = validation.get("summary", {})
+    violations = 0
+    if not batfish_pass:
+        cp = summary.get("CP", {})
+        if cp.get("status") != "PASS":
+            violations += 1
+        tp = summary.get("TP", {})
+        if tp.get("status") != "PASS":
+            violations += 1
+        for reach in summary.get("REACH", []):
+            if reach.get("status") != "PASS":
+                violations += 1
     
     metrics = {
         "test_id": test_case["id"],
         "query": test_case["query"],
         "model": model_output.get("model", "unknown"),
-        "rag_enabled": model_output.get("rag_enabled", False),
+        "rag_enabled": rag_enabled,
         "loopback_enabled": model_output.get("loopback_enabled", False),
         "loopback_attempted": model_output.get("loopback_attempted", False),
+        "result_type": result_type,  # "primary" or "loopback"
+        "used_loopback": model_output.get("used_loopback", False) if result_type == "loopback" else False,
         "exact_match": exact_match,
         "commands_precision": command_metrics["precision"],
         "commands_recall": command_metrics["recall"],
         "commands_f1": command_metrics["f1"],
         "intent_match": intent_match,
-        "batfish_pass": 1 if batfish_result.get("batfish_pass", False) else 0,
-        "batfish_violations": len(batfish_result.get("violations", [])),
+        "batfish_pass": batfish_pass,
+        "batfish_violations": violations,
         "batfish_result": validation_result,
         "batfish_status": validation_status,
         "ai_verdict": verdict_status,
@@ -424,6 +521,8 @@ def compute_metrics(test_case: Dict,
         "error_message": model_output.get("error", ""),
         "timestamp": datetime.now().isoformat()
     }
+    
+    logger.info(f"  ✓ Metrics computed for {result_type}")
     
     return metrics
 
@@ -469,37 +568,63 @@ def append_raw_response(output_dir: Path,
                        model_output: Dict,
                        expected: Dict) -> None:
     """
-    Append a raw response entry to raw_responses.jsonl.
+    Append raw response entries to raw_responses.jsonl.
+    Stores both primary and loopback results if available.
     
     Args:
         output_dir: Output directory path
         test_id: Test case ID
         model: Model name
-        rag_enabled: Whether RAG was enabled
+        rag_enabled: Whether RAG was enabled for primary
         loopback_enabled: Whether loopback was enabled
         query: Input query
-        model_output: Model's output
+        model_output: Model's output (with 'primary' and optionally 'loopback')
         expected: Expected output
     """
     jsonl_path = output_dir / "raw_responses.jsonl"
-    entry = {
+    
+    # Always write primary result
+    primary_entry = {
         "test_id": test_id,
         "model": model,
         "rag_enabled": rag_enabled,
         "loopback_enabled": loopback_enabled,
-        "loopback_attempted": model_output.get("loopback_attempted", False),
+        "result_type": "primary",
         "query": query,
         "model_output": {
-            "response": model_output.get("response", []),
-            "config": model_output.get("config", ""),
+            "response": model_output["primary"].get("response", []),
+            "config": model_output["primary"].get("config", ""),
             "error": model_output.get("error")
         },
-        "validation": model_output.get("validation", {}),
-        "verdict": model_output.get("verdict", {}),
+        "validation": model_output["primary"].get("validation", {}),
+        "verdict": model_output["primary"].get("verdict", {}),
         "expected": expected
     }
     with open(jsonl_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(entry) + '\n')
+        f.write(json.dumps(primary_entry) + '\n')
+    
+    # Write loopback result if it exists
+    if model_output.get("loopback"):
+        loopback_entry = {
+            "test_id": test_id,
+            "model": model,
+            "rag_enabled": False,  # Loopback always disables RAG
+            "loopback_enabled": loopback_enabled,
+            "result_type": "loopback",
+            "loopback_attempted": model_output.get("loopback_attempted", False),
+            "used_loopback": model_output.get("used_loopback", False),
+            "query": query,
+            "model_output": {
+                "response": model_output["loopback"].get("response", []),
+                "config": model_output["loopback"].get("config", ""),
+                "error": None
+            },
+            "validation": model_output["loopback"].get("validation", {}),
+            "verdict": model_output["loopback"].get("verdict", {}),
+            "expected": expected
+        }
+        with open(jsonl_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(loopback_entry) + '\n')
 
 
 def write_metrics(output_dir: Path, 
@@ -712,27 +837,50 @@ def main() -> int:
             
             try:
                 # Call the model with full pipeline
+                logger.info(f"  → Calling model pipeline (T2 + T3 + Verdict)...")
                 model_output = call_model(model, query, rag_enabled, loopback_enabled)
+                logger.info(f"  ✓ Model pipeline completed successfully")
                 
-                # Extract Batfish validation
-                batfish_result = validate_with_batfish(test_id, model_output, expected)
+                # Compute metrics for PRIMARY result
+                logger.info(f"  → Computing metrics for primary result...")
+                primary_metrics = compute_metrics(test_case, model_output, "primary")
+                all_metrics.append(primary_metrics)
+                logger.info(f"  ✓ Primary metrics computed and stored")
                 
-                # Compute metrics
-                metrics = compute_metrics(test_case, model_output, batfish_result)
-                all_metrics.append(metrics)
+                # Log primary summary
+                logger.info(f"  → PRIMARY Results:")
+                logger.info(f"    • Exact match: {primary_metrics['exact_match']}")
+                logger.info(f"    • Commands F1: {primary_metrics['commands_f1']:.3f}")
+                logger.info(f"    • Intent match: {primary_metrics['intent_match']}")
+                logger.info(f"    • Batfish pass: {primary_metrics['batfish_pass']}")
+                logger.info(f"    • AI verdict: {primary_metrics['ai_verdict']}")
                 
-                # Log summary
-                logger.info(f"  ✓ Exact match: {metrics['exact_match']}")
-                logger.info(f"  ✓ Commands F1: {metrics['commands_f1']:.3f}")
-                logger.info(f"  ✓ Intent match: {metrics['intent_match']}")
-                logger.info(f"  ✓ Batfish pass: {metrics['batfish_pass']}")
-                logger.info(f"  ✓ AI verdict: {metrics['ai_verdict']}")
-                if metrics.get('loopback_attempted'):
-                    logger.info(f"  ⚠ Loopback was attempted")
-                if metrics.get('has_error'):
-                    logger.info(f"  ✗ Error occurred during processing")
+                # Compute metrics for LOOPBACK result if it exists
+                if model_output.get("loopback"):
+                    logger.info(f"  → Computing metrics for loopback result...")
+                    loopback_metrics = compute_metrics(test_case, model_output, "loopback")
+                    if loopback_metrics:
+                        all_metrics.append(loopback_metrics)
+                        logger.info(f"  ✓ Loopback metrics computed and stored")
+                        
+                        # Log loopback summary
+                        logger.info(f"  → LOOPBACK Results:")
+                        logger.info(f"    • Exact match: {loopback_metrics['exact_match']}")
+                        logger.info(f"    • Commands F1: {loopback_metrics['commands_f1']:.3f}")
+                        logger.info(f"    • Intent match: {loopback_metrics['intent_match']}")
+                        logger.info(f"    • Batfish pass: {loopback_metrics['batfish_pass']}")
+                        logger.info(f"    • AI verdict: {loopback_metrics['ai_verdict']}")
+                        
+                        # Compare results
+                        if loopback_metrics['batfish_pass'] > primary_metrics['batfish_pass']:
+                            logger.info(f"  ✓ LOOPBACK IMPROVED: Batfish pass (FAIL → PASS)")
+                        elif loopback_metrics['commands_f1'] > primary_metrics['commands_f1']:
+                            logger.info(f"  ⚠ LOOPBACK: Better F1 ({primary_metrics['commands_f1']:.3f} → {loopback_metrics['commands_f1']:.3f})")
+                        else:
+                            logger.info(f"  ⚠ LOOPBACK: No improvement")
                 
-                # Save raw response
+                # Save raw response (both primary and loopback)
+                logger.info(f"  → Saving raw responses to JSONL...")
                 append_raw_response(
                     output_dir,
                     test_id,
@@ -743,6 +891,7 @@ def main() -> int:
                     model_output,
                     expected
                 )
+                logger.info(f"  ✓ Raw responses saved")
                 
             except Exception as e:
                 logger.error(f"Error processing {test_id} with {description}: {e}")
@@ -756,6 +905,8 @@ def main() -> int:
                     "rag_enabled": rag_enabled,
                     "loopback_enabled": loopback_enabled,
                     "loopback_attempted": False,
+                    "result_type": "primary",
+                    "used_loopback": False,
                     "exact_match": 0,
                     "commands_precision": 0.0,
                     "commands_recall": 0.0,
@@ -775,17 +926,19 @@ def main() -> int:
                 continue
         
         # Write incremental metrics after each test (all configs for this test)
-        logger.info(f"Saving incremental metrics ({len(all_metrics)} total so far)...")
+        logger.info(f"  → Saving incremental metrics ({len(all_metrics)} total so far)...")
         try:
             write_metrics(output_dir, all_metrics)
+            logger.info(f"  ✓ Incremental metrics saved successfully")
         except Exception as e:
             logger.warning(f"Failed to write incremental metrics: {e}")
     
     # Write final metrics
     logger.info("=" * 80)
-    logger.info("Writing final metrics")
+    logger.info("→ Writing final metrics to disk...")
     try:
         write_metrics(output_dir, all_metrics)
+        logger.info("✓ Final metrics written successfully")
     except Exception as e:
         logger.error(f"Failed to write metrics: {e}")
         import traceback
@@ -803,6 +956,7 @@ def main() -> int:
     # Compute and log summary statistics by configuration
     if all_metrics:
         logger.info("=" * 80)
+        logger.info("→ Computing summary statistics by configuration...")
         logger.info("SUMMARY STATISTICS BY CONFIGURATION")
         logger.info("=" * 80)
         
@@ -840,7 +994,7 @@ def main() -> int:
         logger.info(f"Results saved to: {output_dir}")
         logger.info("=" * 80)
     
-    logger.info("Benchmarking complete!")
+    logger.info("✓ Benchmarking complete!")
     return 0
 
 
