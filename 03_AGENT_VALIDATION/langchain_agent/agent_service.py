@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List, Tuple, Set
 import requests
 import datetime, pathlib
 from langchain_core.callbacks.base import BaseCallbackHandler
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -19,6 +20,10 @@ from langchain_core.output_parsers import StrOutputParser
 
 # ========= CONFIG LOAD FROM JSON =========
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(HERE, ".env"))
+
 CONFIG_PATH = os.path.join(HERE, "config.json")
 if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r") as f:
