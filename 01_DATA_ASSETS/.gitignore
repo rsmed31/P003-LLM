@@ -1,0 +1,4 @@
+manuals_raw/blobs/*
+_pycache/*
+*.pyc
+manuals_raw/manifests

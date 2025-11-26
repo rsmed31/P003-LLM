@@ -1,2 +1,11 @@
-# 01_DATA_ASSETS: Knowledge Base and Storage
-This directory holds all foundational data assets for the RAG system, including raw manuals, chunked data, and the serialized FAISS vector index. Team 1 owns this data structure.
+# Postgres
+
+Start: sudo docker compose up --build
+Stop:  sudo docker compose down -v
+
+## Note on SQL changes
+
+Once the database is initialized, PostgreSQL stores the data in volumes. If you make changes to the SQL init files, they won’t be applied automatically on the next start.
+
+To apply updated SQL changes, you must reset the volumes:
+with sudo docker compose down -v

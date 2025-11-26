@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  batfish:
+    image: batfish/allinone:latest
+    container_name: batfish
+    ports:
+      - "9997:9997"  # CoordWork port
+      - "9996:9996"  # CoordWork SSL port
+    volumes:
+      - batfish-data:/data
+    networks:
+      - validation-net
+    # No health check - just let it start
+    restart: unless-stopped
+
+  validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: validator
+    ports:
+      - "5000:5000"
+    environment:
+      - BATFISH_HOST=batfish
+      - BF_NETWORK_NAME=network-test
+      - BF_SNAPSHOT_BASE=/app/configs
+      - PORT=5000
+      - BATFISH_READY_TIMEOUT=120
+      - BATFISH_READY_INTERVAL=3
+      - SKIP_BASE_COPY=false
+      - CP_QUERY_TIMEOUT=10
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./validator.py:/app/validator.py:ro
+    depends_on:
+      - batfish
+    networks:
+      - validation-net
+    restart: unless-stopped
+
+volumes:
+  batfish-data:
+    driver: local
+
+networks:
+  validation-net:
+    driver: bridge

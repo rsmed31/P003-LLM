@@ -1,0 +1,367 @@
+{
+  "test_suite_name": "cisco_ios_basic_vlan_ospf_bgp",
+  "description": "Simple test cases for VLAN, OSPF, and BGP configuration to validate LLM network configuration generation.",
+  "tests": [
+    {
+      "id": "VLAN-001",
+      "query": "On router R1, create VLAN 10 with name SALES.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "vlan 10",
+              "name SALES"
+            ],
+            "protocol": "VLAN",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "10"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "VLAN-002",
+      "query": "On router R1, create VLAN 20 with name ENGINEERING and VLAN 30 with name MARKETING.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "vlan 20",
+              "name ENGINEERING",
+              "vlan 30",
+              "name MARKETING"
+            ],
+            "protocol": "VLAN",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "20"}
+                ]
+              },
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "30"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "VLAN-003",
+      "query": "On router R1, assign interface GigabitEthernet0/1 to VLAN 10 as an access port.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/1",
+              "switchport mode access",
+              "switchport access vlan 10",
+              "no shutdown"
+            ],
+            "protocol": "VLAN",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "vlan", "id": "10"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "OSPF-001",
+      "query": "On router R1, configure OSPF process 1 and advertise network 10.1.12.0/30 in area 0.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
+            ],
+            "protocol": "OSPF",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "network", "id": "10.1.12.0/30"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "OSPF-002",
+      "query": "On router R1, configure interface GigabitEthernet0/0 with IP 10.1.12.1/30 and enable OSPF area 0 on it.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.1 255.255.255.252",
+              "no shutdown",
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
+            ],
+            "protocol": "OSPF",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "OSPF-003",
+      "query": "Configure OSPF between R1 and R2. R1 uses 10.1.12.1/30 on Gi0/0, R2 uses 10.1.12.2/30 on Gi0/0. Both in area 0.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.1 255.255.255.252",
+              "no shutdown",
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
+            ],
+            "protocol": "OSPF",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
+                ]
+              }
+            ]
+          },
+          {
+            "device_name": "R2",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.2 255.255.255.252",
+              "no shutdown",
+              "router ospf 1",
+              "network 10.1.12.0 0.0.0.3 area 0"
+            ],
+            "protocol": "OSPF",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "OSPF-004",
+      "query": "On router R1, set the OSPF router-id to 1.1.1.1.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "router ospf 1",
+              "router-id 1.1.1.1"
+            ],
+            "protocol": "OSPF",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router-id", "id": "1.1.1.1"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "BGP-001",
+      "query": "On router R1, configure BGP with AS number 65001.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "router bgp 65001"
+            ],
+            "protocol": "BGP",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "autonomous-system", "id": "65001"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "BGP-002",
+      "query": "On router R1 in AS 65001, configure a BGP neighbor 10.1.12.2 in AS 65002.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "router bgp 65001",
+              "neighbor 10.1.12.2 remote-as 65002"
+            ],
+            "protocol": "BGP",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "10.1.12.2"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "BGP-003",
+      "query": "Configure eBGP between R1 (AS 65001, IP 10.1.12.1) and R2 (AS 65002, IP 10.1.12.2) on their Gi0/0 interfaces.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.1 255.255.255.252",
+              "no shutdown",
+              "router bgp 65001",
+              "neighbor 10.1.12.2 remote-as 65002"
+            ],
+            "protocol": "BGP",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
+                ]
+              }
+            ]
+          },
+          {
+            "device_name": "R2",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 10.1.12.2 255.255.255.252",
+              "no shutdown",
+              "router bgp 65002",
+              "neighbor 10.1.12.1 remote-as 65001"
+            ],
+            "protocol": "BGP",
+            "intent": [
+              {
+                "type": "adjacency",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "router", "id": "R2"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INTERFACE-001",
+      "query": "On router R1, configure interface GigabitEthernet0/0 with IP address 192.168.1.1/24.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface GigabitEthernet0/0",
+              "ip address 192.168.1.1 255.255.255.0",
+              "no shutdown"
+            ],
+            "protocol": "INTERFACE",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "interface", "id": "GigabitEthernet0/0"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INTERFACE-002",
+      "query": "On router R1, configure a loopback interface Loopback0 with IP 1.1.1.1/32.",
+      "expected": {
+        "response": [
+          {
+            "device_name": "R1",
+            "configuration_mode_commands": [
+              "interface Loopback0",
+              "ip address 1.1.1.1 255.255.255.255",
+              "no shutdown"
+            ],
+            "protocol": "INTERFACE",
+            "intent": [
+              {
+                "type": "interface",
+                "endpoints": [
+                  {"role": "router", "id": "R1"},
+                  {"role": "interface", "id": "Loopback0"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

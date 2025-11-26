@@ -1,0 +1,149 @@
+{
+  "default": {
+    "total_chunks": 15,
+    "code_ratio": 0.6,
+    "theory_ratio": 0.4,
+    "min_code": 3,
+    "min_theory": 2,
+    "code_chunk_priority": 1.2,
+    "max_tokens_per_chunk": 400,
+    "chunk_temperature": 0.0
+  },
+  "protocol_overrides": {
+    "ospf": {
+      "total_chunks": 20,
+      "code_ratio": 0.7,
+      "theory_ratio": 0.3,
+      "min_code": 5,
+      "min_theory": 2,
+      "code_chunk_priority": 1.3,
+      "max_tokens_per_chunk": 450,
+      "chunk_temperature": 0.0
+    },
+    "bgp": {
+      "total_chunks": 25,
+      "code_ratio": 0.65,
+      "theory_ratio": 0.35,
+      "min_code": 6,
+      "min_theory": 3,
+      "code_chunk_priority": 1.25,
+      "max_tokens_per_chunk": 500,
+      "chunk_temperature": 0.0
+    },
+    "eigrp": {
+      "total_chunks": 18,
+      "code_ratio": 0.7,
+      "theory_ratio": 0.3,
+      "min_code": 5,
+      "min_theory": 2,
+      "code_chunk_priority": 1.3,
+      "max_tokens_per_chunk": 400,
+      "chunk_temperature": 0.0
+    },
+    "vlan": {
+      "total_chunks": 15,
+      "code_ratio": 0.75,
+      "theory_ratio": 0.25,
+      "min_code": 6,
+      "min_theory": 2,
+      "code_chunk_priority": 1.4,
+      "max_tokens_per_chunk": 350,
+      "chunk_temperature": 0.0
+    },
+    "stp": {
+      "total_chunks": 18,
+      "code_ratio": 0.65,
+      "theory_ratio": 0.35,
+      "min_code": 4,
+      "min_theory": 3,
+      "code_chunk_priority": 1.2,
+      "max_tokens_per_chunk": 400,
+      "chunk_temperature": 0.0
+    },
+    "hsrp": {
+      "total_chunks": 15,
+      "code_ratio": 0.7,
+      "theory_ratio": 0.3,
+      "min_code": 5,
+      "min_theory": 2,
+      "code_chunk_priority": 1.3,
+      "max_tokens_per_chunk": 400,
+      "chunk_temperature": 0.0
+    },
+    "vrrp": {
+      "total_chunks": 15,
+      "code_ratio": 0.7,
+      "theory_ratio": 0.3,
+      "min_code": 5,
+      "min_theory": 2,
+      "code_chunk_priority": 1.3,
+      "max_tokens_per_chunk": 400,
+      "chunk_temperature": 0.0
+    },
+    "acl": {
+      "total_chunks": 18,
+      "code_ratio": 0.8,
+      "theory_ratio": 0.2,
+      "min_code": 7,
+      "min_theory": 2,
+      "code_chunk_priority": 1.5,
+      "max_tokens_per_chunk": 350,
+      "chunk_temperature": 0.0
+    },
+    "nat": {
+      "total_chunks": 15,
+      "code_ratio": 0.75,
+      "theory_ratio": 0.25,
+      "min_code": 6,
+      "min_theory": 2,
+      "code_chunk_priority": 1.4,
+      "max_tokens_per_chunk": 400,
+      "chunk_temperature": 0.0
+    },
+    "qos": {
+      "total_chunks": 20,
+      "code_ratio": 0.65,
+      "theory_ratio": 0.35,
+      "min_code": 5,
+      "min_theory": 3,
+      "code_chunk_priority": 1.2,
+      "max_tokens_per_chunk": 450,
+      "chunk_temperature": 0.0
+    }
+  },
+  "intent_modifiers": {
+    "configure": {
+      "code_ratio_boost": 0.1,
+      "code_priority_boost": 0.1
+    },
+    "troubleshoot": {
+      "theory_ratio_boost": 0.15,
+      "code_priority_boost": -0.1
+    },
+    "explain": {
+      "theory_ratio_boost": 0.2,
+      "code_priority_boost": -0.2
+    },
+    "implement": {
+      "code_ratio_boost": 0.15,
+      "code_priority_boost": 0.2
+    }
+  },
+  "quality_thresholds": {
+    "min_quality_score": 0.4,
+    "excellent_quality_score": 0.8,
+    "min_correlation": 0.3,
+    "min_query_coverage": 0.5
+  },
+  "notes": {
+    "description": "Retrieval plan configuration for RAG pipeline",
+    "code_ratio": "Proportion of code chunks (CLI-heavy content)",
+    "theory_ratio": "Proportion of theory chunks (explanatory content)",
+    "min_code": "Minimum number of code chunks to retrieve",
+    "min_theory": "Minimum number of theory chunks to retrieve",
+    "code_chunk_priority": "Score multiplier for CLI-heavy chunks (>1.0 boosts)",
+    "max_tokens_per_chunk": "Approximate token limit per chunk",
+    "chunk_temperature": "0.0 = fully deterministic, >0 adds randomness",
+    "protocol_overrides": "Protocol-specific configurations that override defaults"
+  }
+}

@@ -1,14 +1,19 @@
 {
     "gemini": {
-        "model": "gemini-2.5-flash",
+        "model": "gemini-2.0-flash",
         "api_key_env": "GEMINI_API_KEY",
-        "supports_rag": true
+        "supports_rag": true,
+        "max_chunks": 5,
+        "max_context_tokens": 2000
     },
     "llama": {
-        "model": "local",
-        "api_link_env": "http://localhost:8000/generate",
+        "model": "zephyr_configurator",
+        "api_link_env": "LLAMA_API_LINK",
         "api_key_env": "LLAMA_API_KEY",
         "supports_rag": true,
-        "context_param": true
+        "context_param": true,
+        "stream": false,
+        "max_chunks": 3,
+        "max_context_tokens": 1500
     }
 }

@@ -1,21 +1,17 @@
 {
-  "SYSTEM_PROMPT": "You are a technical automation assistant. Always return precise, executable steps and commands to solve the requested configuration task. Do not guess. Use only the provided request and context. If required details are missing, respond with 'INSUFFICIENT DATA'. Keep outputs deterministic and parseable.",
+  "SYSTEM_PROMPT": "You are a Cisco IOS network configuration engine. Output ONLY valid JSON arrays containing device configurations. No explanations, no markdown, no text outside the JSON.",
+  
+  "CRITICAL_RULE_INSTRUCTION": "**CRITICAL RULE:** Response MUST start with '[' and end with ']'. Output ONLY the JSON array. No text before or after.",
+  
+  "TASK_INSTRUCTION": "# TASK:\nGenerate Cisco IOS configurations based on the user's request.\n\n**RULES:**\n1. Configure ONLY what the user asks for\n2. If user asks for OSPF, set protocol to \"OSPF\"\n3. If user asks for VLAN, set protocol to \"VLAN\"\n4. If user asks for BGP, set protocol to \"BGP\"\n5. If user asks for EIGRP, set protocol to \"EIGRP\"\n6. Do NOT add protocols that were not requested\n7. Use exact device names from the query (R1, R2, SW1, etc.)\n8. Always include 'no shutdown' on interfaces",
+  
+  "SITUATION_HEADER": "# INPUT DATA:",
+  
+  "CONFIG_GOAL_HEADER": "**Goal:**",
+  
+  "CONTEXT_BASE_HEADER": "**Context:**",
 
-  "RAG_PROMPT": "Ground your output ONLY in the retrieved context.\n<RETRIEVED_CONTEXT>\n{{context}}\n</RETRIEVED_CONTEXT>\nIf sources conflict, choose the most consistent option and proceed.",
+  "SCHEMA_HEADER": "# OUTPUT JSON SCHEMA:",
 
-  "COMMANDS_ONLY": "Return ONLY a fenced code block containing the exact commands to apply, with no commentary. If environment/tooling differs across components, group commands per component with clear headers as comments.",
-
-  "STEP_PLAN": "Before commands, produce a minimal numbered plan of actions (prechecks → changes → postchecks) in one short list. Each step must be testable and map 1:1 to commands. If any prerequisite is unknown, output 'INSUFFICIENT DATA'.",
-
-  "CONFIG_GENERATION": "Using the user request and the retrieved context, produce a minimal, correct configuration change set. Avoid placeholders unless explicitly provided. Ensure structure is valid.",
-
-  "SYNTAX_VALIDATION": "Lint the provided commands for syntax/ordering issues. If issues exist, output a corrected version under a single fenced code block. If no issues, return ' Syntax check passed.'",
-
-  "SELF_VALIDATION": "Given a validation error message, identify the smallest change that fixes it and output ONLY the corrected commands in a fenced code block ready to re-run.",
-
-  "RE_PROMPT": "Given a failed validation or error log, regenerate the minimal corrected command set that preserves the original intent. Output ONLY the corrected commands in a fenced code block.",
-
-  "FACTUAL_QA": "Answer succinctly using only the provided context. If incomplete, respond 'INSUFFICIENT DATA'.",
-
-  "FINAL_RULES": "Outputs must be deterministic, grounded in the given context, and parser-friendly. Never expose hidden reasoning. Prefer minimal diffs over full rewrites. When uncertain, return 'INSUFFICIENT DATA'."
+  "JSON_SCHEMA_BODY": "[\n  {\n    \"device_name\": \"<DEVICE_NAME>\",\n    \"configuration_mode_commands\": [\"<CMD1>\", \"<CMD2>\"],\n    \"protocol\": \"<PROTOCOL>\",\n    \"intent\": [{\"type\": \"<INTENT_TYPE>\", \"endpoints\": [{\"role\": \"router\", \"id\": \"<ID1>\"}, {\"role\": \"router\", \"id\": \"<ID2>\"}]}]\n  }\n]\n\n**PROTOCOL VALUES (use exactly as shown):**\n- \"OSPF\" - for OSPF routing\n- \"BGP\" - for BGP routing  \n- \"EIGRP\" - for EIGRP routing\n- \"VLAN\" - for VLAN configuration\n- \"INTERFACE\" - for interface-only configuration\n\n**INTENT TYPES (use exactly as shown):**\n- \"adjacency\" - routing protocol neighbors\n- \"connectivity\" - devices can communicate\n- \"reachability\" - end-to-end path exists\n- \"interface\" - interface configuration\n- \"policy\" - access control or filtering\n- \"redundancy\" - backup/failover\n\n**EXAMPLE 1 - OSPF:**\nQuery: \"Configure OSPF area 0 on R1 and R2\"\n[\n  {\n    \"device_name\": \"R1\",\n    \"configuration_mode_commands\": [\n      \"interface GigabitEthernet0/0\",\n      \"ip address 10.1.12.1 255.255.255.252\",\n      \"no shutdown\",\n      \"router ospf 1\",\n      \"network 10.1.12.0 0.0.0.3 area 0\"\n    ],\n    \"protocol\": \"OSPF\",\n    \"intent\": [{\"type\": \"adjacency\", \"endpoints\": [{\"role\": \"router\", \"id\": \"R1\"}, {\"role\": \"router\", \"id\": \"R2\"}]}]\n  },\n  {\n    \"device_name\": \"R2\",\n    \"configuration_mode_commands\": [\n      \"interface GigabitEthernet0/0\",\n      \"ip address 10.1.12.2 255.255.255.252\",\n      \"no shutdown\",\n      \"router ospf 1\",\n      \"network 10.1.12.0 0.0.0.3 area 0\"\n    ],\n    \"protocol\": \"OSPF\",\n    \"intent\": [{\"type\": \"adjacency\", \"endpoints\": [{\"role\": \"router\", \"id\": \"R1\"}, {\"role\": \"router\", \"id\": \"R2\"}]}]\n  }\n]\n\n**EXAMPLE 2 - VLAN:**\nQuery: \"Create VLAN 10 named SALES on R1\"\n[\n  {\n    \"device_name\": \"R1\",\n    \"configuration_mode_commands\": [\n      \"vlan 10\",\n      \"name SALES\"\n    ],\n    \"protocol\": \"VLAN\",\n    \"intent\": [{\"type\": \"interface\", \"endpoints\": [{\"role\": \"router\", \"id\": \"R1\"}, {\"role\": \"vlan\", \"id\": \"10\"}]}]\n  }\n]\n\n**EXAMPLE 3 - BGP:**\nQuery: \"Configure BGP AS 65001 on R1\"\n[\n  {\n    \"device_name\": \"R1\",\n    \"configuration_mode_commands\": [\n      \"router bgp 65001\",\n      \"neighbor 10.1.12.2 remote-as 65002\"\n    ],\n    \"protocol\": \"BGP\",\n    \"intent\": [{\"type\": \"adjacency\", \"endpoints\": [{\"role\": \"router\", \"id\": \"R1\"}, {\"role\": \"router\", \"id\": \"R2\"}]}]\n  }\n]"
 }

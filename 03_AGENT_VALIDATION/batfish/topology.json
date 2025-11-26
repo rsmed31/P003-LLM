@@ -1,0 +1,9 @@
+{
+  "edges": [
+    { "node1": {"hostname":"R1","interfaceName":"GigabitEthernet0/0"},
+      "node2": {"hostname":"R2","interfaceName":"GigabitEthernet0/0"} },
+
+    { "node1": {"hostname":"R2","interfaceName":"GigabitEthernet0/1"},
+      "node2": {"hostname":"R3","interfaceName":"GigabitEthernet0/1"} }
+  ]
+}
