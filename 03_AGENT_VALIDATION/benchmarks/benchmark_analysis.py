@@ -534,8 +534,8 @@ def plot_ai_verdict_pass_by_model_rag(aggregated: Any, plots_dir: Path, chunking
     plt.bar([i + width/2 for i in x], rag_off_values, width, label='RAG Off', alpha=0.8, color='#e74c3c')
     
     plt.xlabel('Model', fontsize=12, fontweight='bold')
-    plt.ylabel('Mean AI Verdict Pass Rate', fontsize=12, fontweight='bold')
-    plt.title(f'AI Verdict Pass Rate by Model and RAG Status (GLOBAL FAILURE METRIC)\nChunk Size: {chunking_info["chunk_size"]}, Top-K: {chunking_info["retriever_top_k"]}', 
+    plt.ylabel('Mean Pipeline Pass Rate', fontsize=12, fontweight='bold')
+    plt.title(f'Pipeline Pass Rate by Model and RAG Status (GLOBAL FAILURE METRIC)\nChunk Size: {chunking_info["chunk_size"]}, Top-K: {chunking_info["retriever_top_k"]}', 
               fontsize=14, fontweight='bold')
     plt.xticks(x, models, rotation=0)
     plt.ylim(0, 1.0)
@@ -543,7 +543,7 @@ def plot_ai_verdict_pass_by_model_rag(aggregated: Any, plots_dir: Path, chunking
     plt.grid(axis='y', alpha=0.3)
     plt.tight_layout()
     
-    plt.savefig(plots_dir / 'ai_verdict_pass_by_model_rag.png', dpi=300, bbox_inches='tight')
+    plt.savefig(plots_dir / 'pipeline_pass_rate_by_model_rag.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 
@@ -720,50 +720,45 @@ def plot_hardest_tests(hardest: List[Tuple[str, Dict]], plots_dir: Path):
 
 
 def plot_rag_impact_comparison(aggregated: Any, plots_dir: Path, chunking_info: Dict, rag_comparison: Dict):
-    """Visualization showing the impact of RAG on each model."""
+    """Visualization showing the impact of RAG on each model using grouped bar chart."""
     if not rag_comparison:
         return
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    fig, ax = plt.subplots(figsize=(14, 7))
     
     models = sorted(rag_comparison.keys())
-    f1_deltas = [rag_comparison[m]['f1_delta'] for m in models]
-    batfish_deltas = [rag_comparison[m]['batfish_pass_delta'] for m in models]
+    metrics = ['f1_delta', 'batfish_pass_delta', 'ai_verdict_pass_delta']
+    metric_labels = ['F1 Score Δ', 'Batfish Pass Δ', 'Pipeline Pass Δ']
+    colors = ['#3498db', '#e67e22', '#9b59b6']
     
-    # Plot 1: F1 Delta
-    colors = ['#2ecc71' if d > 0 else '#e74c3c' for d in f1_deltas]
-    bars1 = ax1.barh(range(len(models)), f1_deltas, alpha=0.8, color=colors)
-    ax1.set_yticks(range(len(models)))
-    ax1.set_yticklabels(models)
-    ax1.set_xlabel('F1 Score Change (RAG On - RAG Off)', fontsize=12, fontweight='bold')
-    ax1.set_title('RAG Impact on F1 Score by Model', fontsize=14, fontweight='bold')
-    ax1.axvline(0, color='black', linestyle='--', linewidth=1)
-    ax1.grid(axis='x', alpha=0.3)
+    x = np.arange(len(models))
+    width = 0.25
     
-    # Add value labels
-    for i, (bar, val) in enumerate(zip(bars1, f1_deltas)):
-        label_x = val + (0.01 if val > 0 else -0.01)
-        ha = 'left' if val > 0 else 'right'
-        ax1.text(label_x, i, f'{val:+.3f}', va='center', ha=ha, fontweight='bold')
+    # Plot grouped bars
+    for i, (metric, label, color) in enumerate(zip(metrics, metric_labels, colors)):
+        values = [rag_comparison[m].get(metric, 0) for m in models]
+        offset = (i - 1) * width
+        bars = ax.bar(x + offset, values, width, label=label, alpha=0.8, color=color)
+        
+        # Add value labels on bars
+        for bar, val in zip(bars, values):
+            height = bar.get_height()
+            label_y = height + 0.01 if height > 0 else height - 0.01
+            va = 'bottom' if height > 0 else 'top'
+            ax.text(bar.get_x() + bar.get_width()/2, label_y, f'{val:+.3f}',
+                   ha='center', va=va, fontsize=9, fontweight='bold',
+                   rotation=0 if abs(height) > 0.05 else 90)
     
-    # Plot 2: Batfish Pass Delta
-    colors2 = ['#2ecc71' if d > 0 else '#e74c3c' for d in batfish_deltas]
-    bars2 = ax2.barh(range(len(models)), batfish_deltas, alpha=0.8, color=colors2)
-    ax2.set_yticks(range(len(models)))
-    ax2.set_yticklabels(models)
-    ax2.set_xlabel('Batfish Pass Rate Change (RAG On - RAG Off)', fontsize=12, fontweight='bold')
-    ax2.set_title('RAG Impact on Validation Pass Rate', fontsize=14, fontweight='bold')
-    ax2.axvline(0, color='black', linestyle='--', linewidth=1)
-    ax2.grid(axis='x', alpha=0.3)
+    ax.set_xlabel('Model', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Metric Change (RAG On - RAG Off)', fontsize=12, fontweight='bold')
+    ax.set_title(f'RAG Impact Analysis: Metric Changes by Model\nChunk Size: {chunking_info["chunk_size"]}, Top-K: {chunking_info["retriever_top_k"]}',
+                 fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, rotation=0)
+    ax.axhline(0, color='black', linestyle='--', linewidth=1, alpha=0.7)
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(axis='y', alpha=0.3)
     
-    # Add value labels
-    for i, (bar, val) in enumerate(zip(bars2, batfish_deltas)):
-        label_x = val + (0.01 if val > 0 else -0.01)
-        ha = 'left' if val > 0 else 'right'
-        ax2.text(label_x, i, f'{val:+.3f}', va='center', ha=ha, fontweight='bold')
-    
-    plt.suptitle(f'RAG Impact Analysis\nChunk Size: {chunking_info["chunk_size"]}, Top-K: {chunking_info["retriever_top_k"]}',
-                 fontsize=16, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.savefig(plots_dir / 'rag_impact_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
