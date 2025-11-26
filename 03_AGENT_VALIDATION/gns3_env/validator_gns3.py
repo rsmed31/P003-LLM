@@ -1,6 +1,6 @@
 """Validator backend using GNS3 instead of Batfish."""
 
-from __future__ import annotations
+from _future_ import annotations
 
 import argparse
 import json
@@ -20,7 +20,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger(_name_)
 
 H1_NAME = os.getenv("GNS3_NODE_H1", "H1")
 H2_IP = os.getenv("GNS3_H2_IP", "192.168.3.10")
@@ -42,7 +42,7 @@ def validate_policy(config_text: str | None = None) -> Dict[str, Any]:
 
     project_id = project["project_id"]
     try:
-        start_all_nodes(project_id)
+        start_all_nodes(project_id)  # Idempotent on the server side.
     except Exception as exc:  # pragma: no cover - safety net
         LOG.error("Unable to start nodes: %s", exc)
         return {"status": "FAIL", "reason": "START_NODES_FAILED", "error": str(exc)}
@@ -65,6 +65,7 @@ def validate_policy(config_text: str | None = None) -> Dict[str, Any]:
         LOG.error("Telnet to %s failed: %s", H1_NAME, exc)
         return {"status": "FAIL", "reason": "CONSOLE_ERROR", "error": str(exc)}
 
+    # Success if any ICMP reply shows up (covers VPCS ping formats).
     success = bool(re.search(r"(icmp_seq|bytes from)", output, flags=re.IGNORECASE))
     details = {"cmd": cmd, "raw": output}
     if success:
@@ -84,5 +85,5 @@ def main() -> None:
     print(json.dumps(result, indent=2))
 
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()

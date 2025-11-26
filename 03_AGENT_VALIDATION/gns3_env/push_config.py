@@ -1,6 +1,6 @@
 """Push an FRR config to a router node via telnet and vtysh."""
 
-from __future__ import annotations
+from _future_ import annotations
 
 import argparse
 import logging
@@ -19,7 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger(_name_)
 TELNET_TIMEOUT = float(os.getenv("TELNET_TIMEOUT", "5"))
 
 
@@ -37,15 +37,18 @@ def push_config(node: str, filepath: str, project_name: str, force: bool = False
     console_port = get_console_port(project["project_id"], node)
     LOG.info("Pushing config %s to %s (console %s)", filepath, node, console_port)
 
+    # Load config lines, skipping blanks and comments.
+    with open(filepath, "r", encoding="utf-8") as handle:
+        lines = [line.strip("\n") for line in handle if line.strip() and not line.strip().startswith("!")]
+
+    # Safety prompt unless --yes used.
     if not force:
         confirm = input(f"Send {len(lines)} lines to {node} on {project_name}? [y/N]: ").strip().lower()
         if confirm not in {"y", "yes"}:
             LOG.info("Aborted by user.")
             return
 
-    with open(filepath, "r", encoding="utf-8") as handle:
-        lines = [line.strip("\n") for line in handle if line.strip() and not line.strip().startswith("!")]
-
+    # Drive vtysh through the telnet console and paste the config.
     tn = telnetlib.Telnet("127.0.0.1", console_port, timeout=TELNET_TIMEOUT)
     tn.read_until(b"#", timeout=TELNET_TIMEOUT)
     _send_lines(tn, ["vtysh"])
@@ -72,5 +75,5 @@ def main() -> None:
     push_config(args.node, args.file, args.project, force=args.yes)
 
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()

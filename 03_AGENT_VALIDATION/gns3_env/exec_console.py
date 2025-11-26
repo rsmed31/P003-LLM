@@ -29,7 +29,12 @@ def main() -> None:
         default=os.getenv("GNS3_PROJECT", "P003_OSPF_GNS3"),
         help="Project name (default: env GNS3_PROJECT or P003_OSPF_GNS3)",
     )
-    parser.add_argument("--wait", type=float, default=float(os.getenv("PING_WAIT", "2")), help="Seconds to wait for output")
+    parser.add_argument(
+        "--wait",
+        type=float,
+        default=float(os.getenv("PING_WAIT", "2")),
+        help="Seconds to wait for output after sending the command",
+    )
     args = parser.parse_args()
 
     project = get_project(args.project)
