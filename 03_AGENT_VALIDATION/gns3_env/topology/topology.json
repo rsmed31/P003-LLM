@@ -1,0 +1,31 @@
+{
+  "project_id": "REPLACE_WITH_PROJECT_ID",
+  "project_name": "P003_OSPF_GNS3",
+  "nodes": [
+    {
+      "name": "H1",
+      "node_id": "REPLACE_WITH_NODE_ID_H1",
+      "console": 5000
+    },
+    {
+      "name": "R1",
+      "node_id": "REPLACE_WITH_NODE_ID_R1",
+      "console": 5001
+    },
+    {
+      "name": "R2",
+      "node_id": "REPLACE_WITH_NODE_ID_R2",
+      "console": 5002
+    },
+    {
+      "name": "R3",
+      "node_id": "REPLACE_WITH_NODE_ID_R3",
+      "console": 5003
+    },
+    {
+      "name": "H2",
+      "node_id": "REPLACE_WITH_NODE_ID_H2",
+      "console": 5004
+    }
+  ]
+}
